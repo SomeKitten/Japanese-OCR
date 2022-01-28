@@ -176,7 +176,7 @@ def cursor_search(x, y, w, h):
 
     img, text = text_from_image(pic)
 
-    pilimg = Image.fromarray(img)
+    pilimg = Image.fromarray(pic)
     pilimg = pilimg.resize((2*w, 2*h), resample=Image.NEAREST)
 
     tkimg = ImageTk.PhotoImage(image=pilimg)
@@ -277,26 +277,24 @@ label = None
 while True:
     x, y = mouse.get_position()
 
-    # mouse.hook(scroll)
-
-    if keyboard.is_pressed('left'):
-        width -= adjust_speed
-        if width < min:
-            width = min
-    if keyboard.is_pressed('right'):
-        width += adjust_speed
-        if width > max:
-            width = max
-    if keyboard.is_pressed('down'):
-        height -= adjust_speed
-        if height < min:
-            height = min
-    if keyboard.is_pressed('up'):
-        height += adjust_speed
-        if height > max:
-            height = max
-
     if keyboard.is_pressed("control"):
+        if keyboard.is_pressed('left'):
+            width -= adjust_speed
+            if width < min:
+                width = min
+        if keyboard.is_pressed('right'):
+            width += adjust_speed
+            if width > max:
+                width = max
+        if keyboard.is_pressed('down'):
+            height -= adjust_speed
+            if height < min:
+                height = min
+        if keyboard.is_pressed('up'):
+            height += adjust_speed
+            if height > max:
+                height = max
+
         if pressed == False:
             # creates a toplevel window
             tw = Toplevel()
