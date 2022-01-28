@@ -97,39 +97,21 @@ def thresh_apply(image):
 
 
 def clahe_contrast(img):
-    # -----Converting image to LAB Color model-----------------------------------
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-
-    # -----Splitting the LAB image to different channels-------------------------
     l, a, b = cv2.split(lab)
-
-    # -----Applying CLAHE to L-channel-------------------------------------------
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     cl = clahe.apply(l)
-
-    # -----Merge the CLAHE enhanced L-channel with the a and b channel-----------
     limg = cv2.merge((cl, a, b))
-
-    # -----Converting image from LAB Color model to RGB model--------------------
     return cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
 
 
+def clahe_contrast_gray(img):
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    return clahe.apply(img)
+
+
 def filter_image(image, inv=False):
-    # if np.average(gray) < 128:
-    #     gray = 255 - gray
-
-    # mask = gray[:, :] < 128
-    # thresh = gray
-    # thresh[mask] = 0
-
     contrast = clahe_contrast(image)
-
-    # red = thresh_mask(contrast[:, :, 2])
-    # green = thresh_mask(contrast[:, :, 1])
-    # blue = thresh_mask(contrast[:, :, 0])
-
-    # thresh = get_grayscale(contrast)
-    # thresh[np.logical_and(np.logical_and(red, green), blue)] = 0
 
     gray = get_grayscale(contrast)
     if inv:
@@ -137,6 +119,32 @@ def filter_image(image, inv=False):
     thresh = thresh_apply(gray)
 
     return thresh
+
+
+def filter_channels(image):
+    b, g, r = cv2.split(image)
+    b = thresh_mask(clahe_contrast_gray(b))
+    g = thresh_mask(clahe_contrast_gray(g))
+    r = thresh_mask(clahe_contrast_gray(r))
+    return b, g, r
+
+
+def filter_text(text):
+    text = text.replace('\n', '')
+    text = text.replace(' ', '')
+    text = text.strip()
+    return text
+
+
+def text_from_channels(image):
+    b, g, r = filter_channels(image)
+    text_b = pytesseract.image_to_string(
+        b, lang="jpn", config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyz --oem 1 --psm 8")
+    text_g = pytesseract.image_to_string(
+        g, lang="jpn", config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyz --oem 1 --psm 8")
+    text_r = pytesseract.image_to_string(
+        r, lang="jpn", config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyz --oem 1 --psm 8")
+    return b, g, r, filter_text(text_b), filter_text(text_g), filter_text(text_r)
 
 
 def text_from_image(image, inv=False):
@@ -154,6 +162,21 @@ def text_from_image(image, inv=False):
     return img, text
 
 
+def lookup_text(text):
+    if text == '':
+        return ("", "", "")
+    print("looking up: " + text)
+    look = jam.lookup(text)
+    while len(look.entries) == 0 or len(look.entries[0].senses) == 0:
+        text = text[:-1]
+
+        if text == '':
+            return ("", "", "")
+
+        look = jam.lookup(text)
+    return (text, look.entries[0].senses[0].text().replace("/", "\n"), look.entries[0].kana_forms[0].text)
+
+
 def cursor_search(x, y, w, h):
     if x < 0.5*w:
         x = 0.5*w
@@ -164,9 +187,9 @@ def cursor_search(x, y, w, h):
     if y > get_monitors()[0].height - 0.5*h:
         y = get_monitors()[0].height - 0.5*h
 
-    if y > get_monitors()[0].height - 3*h:
+    if y > get_monitors()[0].height - (h + 2*h):
         win.geometry('%dx%d+%d+%d' %
-                     (2*w, 2*h, x - w, y - 3*h))
+                     (2*w, 2*h, x - w, y - (h + 2*h)))
     else:
         win.geometry('%dx%d+%d+%d' %
                      (2*w, 2*h, x - w, y + h))
@@ -174,8 +197,9 @@ def cursor_search(x, y, w, h):
     pic = grab_screen(int(x - 0.5*w), int(y - 0.5*h),
                       int(x + 0.5*w), int(y + 0.5*h))
 
-    img, text = text_from_image(pic)
+    b, g, r, text_b, text_g, text_r = text_from_channels(pic)
 
+    # pilimg = Image.fromarray(np.concatenate((b, g, r), axis=0))
     pilimg = Image.fromarray(pic)
     pilimg = pilimg.resize((2*w, 2*h), resample=Image.NEAREST)
 
@@ -188,19 +212,29 @@ def cursor_search(x, y, w, h):
 
     win.update()
 
-    print("raw: " + text)
+    print("raw: " + text_b + "\n" + text_g + "\n" + text_r)
 
-    if text == '':
+    text_b = filter_text(text_b)
+    text_g = filter_text(text_g)
+    text_r = filter_text(text_r)
+
+    print("filtered: " + text_b + "\n" + text_g + "\n" + text_r)
+
+    text_b = lookup_text(text_b)
+    text_g = lookup_text(text_g)
+    text_r = lookup_text(text_r)
+
+    print("looked up: " + str(text_b) + "\n" +
+          str(text_g) + "\n" + str(text_r))
+
+    if text_b[0] != "" and len(text_b[0]) >= len(text_g[0]) and len(text_b[0]) >= len(text_r[0]):
+        return text_b
+    elif text_g[0] != "" and len(text_g[0]) >= len(text_b[0]) and len(text_g[0]) >= len(text_r[0]):
+        return text_g
+    elif text_r[0] != "" and len(text_r[0]) >= len(text_b[0]) and len(text_r[0]) >= len(text_g[0]):
+        return text_r
+    else:
         return ("none", "none", "none")
-    look = jam.lookup(text)
-    while len(look.entries) == 0 or len(look.entries[0].senses) == 0:
-        text = text[:-1]
-
-        if text == '':
-            return ("none", "none", "none")
-
-        look = jam.lookup(text)
-    return (text, look.entries[0].senses[0].text().replace("/", "\n"), look.entries[0].kana_forms[0].text)
 
 
 class CreateToolTip(object):
