@@ -1,6 +1,6 @@
+import _thread
 import ctypes
 import os
-from time import sleep
 from tkinter import Label, Tk, Toplevel
 from PIL import Image, ImageTk
 import mouse
@@ -31,7 +31,6 @@ def grab_screen(x1, y1, x2, y2):
     result = (ctypes.c_ubyte*objlength)()
 
     grab.getScreen(x1, y1, w, h, result)
-    # return Image.frombuffer('RGB', (w, h), result, 'raw', 'RGB', 0, 1)
     np_img = np.frombuffer(result, np.uint8).reshape(h, w, 3)
     return np_img
 
@@ -40,42 +39,36 @@ def grab_screen(x1, y1, x2, y2):
 def get_grayscale(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
+
 # noise removal
-
-
 def remove_noise(image):
     return cv2.medianBlur(image, 5)
 
+
 # thresholding
-
-
 def thresholding(image):
     return cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
+
 # dilation
-
-
 def dilate(image):
     kernel = np.ones((5, 5), np.uint8)
     return cv2.dilate(image, kernel, iterations=1)
 
+
 # erosion
-
-
 def erode(image):
     kernel = np.ones((5, 5), np.uint8)
     return cv2.erode(image, kernel, iterations=1)
 
+
 # opening - erosion followed by dilation
-
-
 def opening(image):
     kernel = np.ones((5, 5), np.uint8)
     return cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
 
+
 # canny edge detection
-
-
 def canny(image):
     return cv2.Canny(image, 100, 200)
 
@@ -138,28 +131,24 @@ def filter_text(text):
 
 def text_from_channels(image):
     b, g, r = filter_channels(image)
-    text_b = pytesseract.image_to_string(
-        b, lang="jpn", config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyz --oem 1 --psm 8")
-    text_g = pytesseract.image_to_string(
-        g, lang="jpn", config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyz --oem 1 --psm 8")
-    text_r = pytesseract.image_to_string(
-        r, lang="jpn", config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyz --oem 1 --psm 8")
-    return b, g, r, filter_text(text_b), filter_text(text_g), filter_text(text_r)
+    try:
+        text_b = pytesseract.image_to_string(
+            b, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+        text_g = pytesseract.image_to_string(
+            g, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+        text_r = pytesseract.image_to_string(
+            r, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+        return b, g, r, filter_text(text_b), filter_text(text_g), filter_text(text_r)
+    except RuntimeError as e:
+        print(e)
+        return b, g, r, '', '', ''
 
 
 def text_from_image(image, inv=False):
-    result = filter_image(image, inv)
-
-    img = result
-
+    img = filter_image(image, inv)
     text = pytesseract.image_to_string(
-        img, lang="jpn", config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyz --oem 1 --psm 6")
-
-    text = text.replace('\n', '')
-    text = text.replace(' ', '')
-    text = text.strip()
-
-    return img, text
+        img, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+    return img, filter_text(text)
 
 
 def lookup_text(text):
@@ -173,52 +162,26 @@ def lookup_text(text):
         if text == '':
             return ("", "", "")
 
-        look = jam.lookup(text)
+        look = jam.lookup(text, strict_lookup=True, lookup_chars=False)
     return (text, look.entries[0].senses[0].text().replace("/", "\n"), look.entries[0].kana_forms[0].text)
 
 
 def cursor_search(x, y, w, h):
-    if x < 0.5*w:
-        x = 0.5*w
-    if y < 0.5*h:
-        y = 0.5*h
-    if x > get_monitors()[0].width - 0.5*w:
-        x = get_monitors()[0].width - 0.5*w
-    if y > get_monitors()[0].height - 0.5*h:
-        y = get_monitors()[0].height - 0.5*h
+    global pic
+    print(x, y, w, h)
+    pic = grab_screen(int(x), int(y), int(x + w), int(y + h))
 
-    if y > get_monitors()[0].height - (h + 2*h):
-        win.geometry('%dx%d+%d+%d' %
-                     (2*w, 2*h, x - w, y - (h + 2*h)))
-    else:
-        win.geometry('%dx%d+%d+%d' %
-                     (2*w, 2*h, x - w, y + h))
-
-    pic = grab_screen(int(x - 0.5*w), int(y - 0.5*h),
-                      int(x + 0.5*w), int(y + 0.5*h))
+    # img, text = text_from_image(pic)
+    # text = lookup_text(text)
+    # if text[0] != '':
+    #     return(text)
+    # else:
+    #     return ("none", "none", "none")
 
     b, g, r, text_b, text_g, text_r = text_from_channels(pic)
-
-    # pilimg = Image.fromarray(np.concatenate((b, g, r), axis=0))
-    pilimg = Image.fromarray(pic)
-    pilimg = pilimg.resize((2*w, 2*h), resample=Image.NEAREST)
-
-    tkimg = ImageTk.PhotoImage(image=pilimg)
-
-    label1.image = tkimg
-    label1.configure(image=tkimg)
-
-    label1.place(x=0, y=0, width=2*w, height=2*h)
-
-    win.update()
+    # b, g, r, text_b, text_g, text_r = "", "", "", "", "", ""
 
     print("raw: " + text_b + "\n" + text_g + "\n" + text_r)
-
-    text_b = filter_text(text_b)
-    text_g = filter_text(text_g)
-    text_r = filter_text(text_r)
-
-    print("filtered: " + text_b + "\n" + text_g + "\n" + text_r)
 
     text_b = lookup_text(text_b)
     text_g = lookup_text(text_g)
@@ -237,123 +200,143 @@ def cursor_search(x, y, w, h):
         return ("none", "none", "none")
 
 
-class CreateToolTip(object):
-    """
-    create a tooltip for a given widget
-    """
+def mouse_event(event):
+    global x, y, x1, y1, x_min, x_max, y_min, y_max
+    if isinstance(event, mouse.ButtonEvent) and keyboard.is_pressed("control"):
+        if event.event_type == 'down':
+            x, y = mouse.get_position()
+        if event.event_type == 'up':
+            x1, y1 = mouse.get_position()
 
-    def __init__(self, widget, text='widget info'):
-        self.waittime = 500  # miliseconds
-        self.wraplength = 180  # pixels
-        # self.widget = widget
-        self.text = text
-        # self.widget.bind("<Enter>", self.enter)
-        # self.widget.bind("<Leave>", self.leave)
-        # self.widget.bind("<ButtonPress>", self.leave)
-        self.id = None
-        self.tw = None
+        x_min = min(x, x1)
+        x_max = max(x, x1)
+        y_min = min(y, y1)
+        y_max = max(y, y1)
 
-    def enter(self, event=None):
-        self.schedule()
+        if x_min == x_max:
+            x_max += 1
+        if y_min == y_max:
+            y_max += 1
 
-    def leave(self, event=None):
-        self.unschedule()
-        self.hidetip()
-
-    def schedule(self):
-        self.unschedule()
-        self.id = self.widget.after(self.waittime, self.showtip)
-
-    def unschedule(self):
-        id = self.id
-        self.id = None
-        if id:
-            self.widget.after_cancel(id)
-
-    def showtip(self, event=None):
-        x = y = 0
-        x, y, cx, cy = self.widget.bbox("insert")
-        x += self.widget.winfo_rootx() + 25
-        y += self.widget.winfo_rooty() + 20
-        # creates a toplevel window
-        self.tw = Toplevel(self.widget)
-        # Leaves only the label and removes the app window
-        self.tw.wm_overrideredirect(True)
-        self.tw.wm_geometry("+%d+%d" % (x, y))
-        label = Label(self.tw, text=self.text, justify='left',
-                      background="#ffffff", relief='solid', borderwidth=1,
-                      wraplength=self.wraplength)
-        label.pack(ipadx=1)
-
-    def hidetip(self):
-        tw = self.tw
-        self.tw = None
-        if tw:
-            tw.destroy()
+        if x_max - x_min > max_size:
+            if event.event_type == "down":
+                x1 = x_min + max_size
+            if event.event_type == "up":
+                x = x_max - max_size
+            x_min = min(x, x1)
+            x_max = max(x, x1)
+            y_min = min(y, y1)
+            y_max = max(y, y1)
+        if y_max - y_min > max_size:
+            if event.event_type == "down":
+                y1 = y_min + max_size
+            if event.event_type == "up":
+                y = y_max - max_size
+            x_min = min(x, x1)
+            x_max = max(x, x1)
+            y_min = min(y, y1)
+            y_max = max(y, y1)
 
 
-width = 50
-height = 25
+def tesseract_loop():
+    global x_min, x_max, y_min, y_max, tooltip_text
+    while True:
+        if keyboard.is_pressed("control"):
+            jp, en, pron = cursor_search(
+                x_min, y_min, int(x_max - x_min), int(y_max - y_min))
 
-min = 10
-max = 200
+            if jp != "none":
+                print("chose: " + jp)
+
+            tooltip_text = jp + "\n" + pron + "\n" + en
+
+
+def main_loop():
+    global ctrl_x, ctrl_y, label1, tooltip_window, select_window
+    mouse.hook(mouse_event)
+
+    while True:
+        if keyboard.is_pressed("control"):
+            if pressed == False:
+                ctrl_x, ctrl_y = mouse.get_position()
+                # creates a toplevel window
+                tooltip_window = Toplevel()
+                # Leaves only the label and removes the app window
+                tooltip_window.wm_overrideredirect(True)
+                tooltip_window.wm_geometry("+%d+%d" % mouse.get_position())
+
+                label = Label(tooltip_window, text="none", justify='left',
+                              background="#ffffff", relief='solid', borderwidth=1,
+                              wraplength=180)
+                label.pack(ipadx=1)
+
+                # creates a toplevel window
+                select_window = Toplevel()
+                select_window.wm_overrideredirect(True)
+                select_window.wm_geometry("%dx%d+%d+%d" % (get_monitors()
+                                                           [0].width, get_monitors()[0].height, 0, 0))
+                select_window.wait_visibility(select_window)
+                select_window.wm_attributes('-alpha', 0)
+
+            w, h = int(x_max - x_min), int(y_max - y_min)
+            win.geometry('%dx%d+%d+%d' %
+                         (2*w, 2*h, ctrl_x - w, ctrl_y - 2*h))
+
+            pilimg = Image.fromarray(pic)
+            pilimg = pilimg.resize((2*w, 2*h), resample=Image.NEAREST)
+
+            tkimg = ImageTk.PhotoImage(image=pilimg)
+
+            label1.image = tkimg
+            label1.configure(image=tkimg)
+
+            label1.place(x=0, y=0, width=2*w, height=2*h)
+
+            if tooltip_window:
+                label.config(text=tooltip_text)
+        else:
+            if tooltip_window:
+                tooltip_window.destroy()
+                tooltip_window = None
+            if select_window:
+                select_window.destroy()
+                select_window = None
+
+            win.geometry('%dx%d+%d+%d' % (0, 0, 0, 0))
+
+        pressed = keyboard.is_pressed("control")
+
+        win.update()
+
+
+def main():
+    _thread.start_new_thread(tesseract_loop, ())
+
+    main_loop()
+
+
+x = y = 0
+x1 = y1 = 1
+x_min = y_min = 0
+x_max = y_max = 1
+
+ctrl_x = ctrl_y = 0
+
+min_size = 10
+max_size = 200
 
 adjust_speed = 15
 
 label1 = Label(win)
-label1.place(x=0, y=0, width=2*width, height=2*height)
+label1.place(x=0, y=0, width=2*(x_max - x_min), height=2*(y_max - y_min))
 
 pressed = False
 
-tw = None
+tooltip_window = None
+select_window = None
 label = None
+pic = np.zeros((1, 1, 3), dtype=np.uint8)
 
-while True:
-    x, y = mouse.get_position()
+tooltip_text = ""
 
-    if keyboard.is_pressed("control"):
-        if keyboard.is_pressed('left'):
-            width -= adjust_speed
-            if width < min:
-                width = min
-        if keyboard.is_pressed('right'):
-            width += adjust_speed
-            if width > max:
-                width = max
-        if keyboard.is_pressed('down'):
-            height -= adjust_speed
-            if height < min:
-                height = min
-        if keyboard.is_pressed('up'):
-            height += adjust_speed
-            if height > max:
-                height = max
-
-        if pressed == False:
-            # creates a toplevel window
-            tw = Toplevel()
-            # Leaves only the label and removes the app window
-            tw.wm_overrideredirect(True)
-            tw.wm_geometry("+%d+%d" % (x, y))
-            label = Label(tw, text="none", justify='left',
-                          background="#ffffff", relief='solid', borderwidth=1,
-                          wraplength=180)
-            label.pack(ipadx=1)
-        jp, en, pron = cursor_search(x, y, int(width), int(height))
-
-        if jp != "none":
-            print(jp, en, pron)
-
-        label.config(text=jp + "\n" + pron + "\n" + en)
-
-        sleep(1/30)
-    else:
-        if tw:
-            tw.destroy()
-            tw = None
-
-        win.geometry('%dx%d+%d+%d' % (0, 0, 0, 0))
-
-    pressed = keyboard.is_pressed("control")
-
-    win.update()
+main()
