@@ -10,6 +10,11 @@ import pytesseract
 import cv2
 import numpy as np
 from jamdict import Jamdict
+from sudachipy import tokenizer
+from sudachipy import dictionary
+from pathlib import Path
+import zipfile
+import json
 
 LibName = 'prtscn.so'
 AbsLibPath = os.path.dirname(os.path.abspath(__file__)) + os.path.sep + LibName
@@ -20,6 +25,39 @@ jam = Jamdict()
 win = Tk()
 win.overrideredirect(True)
 win.geometry("0x0")
+
+tokenizer_obj = dictionary.Dictionary(dict='full').create()
+mode = tokenizer.Tokenizer.SplitMode.A
+
+SCRIPT_DIR = Path(__file__).parent
+dictionary_map = {}
+
+
+def load_dictionary(dictionary):
+    output_map = {}
+    archive = zipfile.ZipFile(dictionary, 'r')
+
+    result = list()
+    for file in archive.namelist():
+        if file.startswith('term'):
+            with archive.open(file) as f:
+                data = f.read()
+                d = json.loads(data.decode("utf-8"))
+                result.extend(d)
+
+    for entry in result:
+        if (entry[0] in output_map):
+            output_map[entry[0]].append(entry)
+        else:
+            # Using headword as key for finding the dictionary entry
+            output_map[entry[0]] = [entry]
+    return output_map
+
+
+def setup():
+    global dictionary_map
+    dictionary_map = load_dictionary(
+        str(Path(SCRIPT_DIR, 'dictionaries', 'jmdict_english.zip')))
 
 
 def grab_screen(x1, y1, x2, y2):
@@ -74,13 +112,7 @@ def canny(image):
 
 
 def thresh_mask(channel):
-    if np.average(channel) < 128:
-        channel = 255 - channel
-
     return channel[:, :] < 128
-    # mask = channel[:, :] < 128
-    # thresh = channel
-    # thresh[mask] = 0
 
 
 def thresh_apply(image):
@@ -111,7 +143,9 @@ def filter_image(image, inv=False):
         gray = 255 - gray
     thresh = thresh_apply(gray)
 
-    return thresh
+    thresh2 = thresholding(thresh)
+
+    return thresh2
 
 
 def filter_channels(image):
@@ -155,40 +189,53 @@ def lookup_text(text):
     if text == '':
         return ("", "", "")
     print("looking up: " + text)
-    look = jam.lookup(text)
+    look = jam.lookup(text, lookup_chars=False)
     while len(look.entries) == 0 or len(look.entries[0].senses) == 0:
         text = text[:-1]
 
         if text == '':
             return ("", "", "")
 
-        look = jam.lookup(text, strict_lookup=True, lookup_chars=False)
+        look = jam.lookup(text, lookup_chars=False)
     return (text, look.entries[0].senses[0].text().replace("/", "\n"), look.entries[0].kana_forms[0].text)
+
+
+def lookup_text_sudachi(text):
+    if text == '':
+        return ("", "", "")
+    print("looking up: " + text)
+    if text not in dictionary_map:
+        m = tokenizer_obj.tokenize(text, mode)[0]
+        text = m.dictionary_form()
+        if text not in dictionary_map:
+            return ("", "", "")
+    entry = dictionary_map[text][0]
+    return (entry[0], ' '.join(entry[5]), entry[1])
 
 
 def cursor_search(x, y, w, h):
     global pic
-    print(x, y, w, h)
-    pic = grab_screen(int(x), int(y), int(x + w), int(y + h))
+    img = grab_screen(int(x), int(y), int(x + w), int(y + h))
 
-    # img, text = text_from_image(pic)
-    # text = lookup_text(text)
-    # if text[0] != '':
-    #     return(text)
-    # else:
-    #     return ("none", "none", "none")
+    pic = img
 
-    b, g, r, text_b, text_g, text_r = text_from_channels(pic)
-    # b, g, r, text_b, text_g, text_r = "", "", "", "", "", ""
+    # pic, text = text_from_image(img)
+
+    # text = lookup_text_sudachi(text)
+
+    # return text
+
+    img = cv2.resize(img, (0, 0), fx=30/h, fy=30/h)
+
+    b, g, r, text_b, text_g, text_r = text_from_channels(img)
+
+    # pic = np.append(np.append(b, g, axis=0), r, axis=0)
 
     print("raw: " + text_b + "\n" + text_g + "\n" + text_r)
 
-    text_b = lookup_text(text_b)
-    text_g = lookup_text(text_g)
-    text_r = lookup_text(text_r)
-
-    print("looked up: " + str(text_b) + "\n" +
-          str(text_g) + "\n" + str(text_r))
+    text_b = lookup_text_sudachi(text_b)
+    text_g = lookup_text_sudachi(text_g)
+    text_r = lookup_text_sudachi(text_r)
 
     if text_b[0] != "" and len(text_b[0]) >= len(text_g[0]) and len(text_b[0]) >= len(text_r[0]):
         return text_b
@@ -248,7 +295,7 @@ def tesseract_loop():
             if jp != "none":
                 print("chose: " + jp)
 
-            tooltip_text = jp + "\n" + pron + "\n" + en
+                tooltip_text = jp + "\n" + pron + "\n" + en
 
 
 def main_loop():
@@ -323,7 +370,7 @@ x_max = y_max = 1
 ctrl_x = ctrl_y = 0
 
 min_size = 10
-max_size = 200
+max_size = 300
 
 adjust_speed = 15
 
@@ -339,4 +386,5 @@ pic = np.zeros((1, 1, 3), dtype=np.uint8)
 
 tooltip_text = ""
 
+setup()
 main()
