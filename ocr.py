@@ -15,10 +15,16 @@ from sudachipy import dictionary
 from pathlib import Path
 import zipfile
 import json
+import platform
 
-LibName = 'prtscn.so'
-AbsLibPath = os.path.dirname(os.path.abspath(__file__)) + os.path.sep + LibName
-grab = ctypes.CDLL(AbsLibPath)
+if platform.system() == 'Windows':
+    import d3dshot
+    d = d3dshot.create(capture_output="numpy")
+else:
+    LibName = 'prtscn.so'
+    AbsLibPath = os.path.dirname(
+        os.path.abspath(__file__)) + os.path.sep + LibName
+    grab = ctypes.CDLL(AbsLibPath)
 
 jam = Jamdict()
 
@@ -60,7 +66,7 @@ def setup():
         str(Path(SCRIPT_DIR, 'dictionaries', 'jmdict_english.zip')))
 
 
-def grab_screen(x1, y1, x2, y2):
+def grab_screen_linux(x1, y1, x2, y2):
     w, h = x2-x1, y2-y1
     size = w * h
     objlength = size * 3
@@ -73,7 +79,12 @@ def grab_screen(x1, y1, x2, y2):
     return np_img
 
 
+def grab_screen_windows(x1, y1, x2, y2):
+    return d.screenshot(region=(x1, y1, x2, y2))
+
 # get grayscale image
+
+
 def get_grayscale(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
@@ -215,7 +226,10 @@ def lookup_text_sudachi(text):
 
 def cursor_search(x, y, w, h):
     global pic
-    img = grab_screen(int(x), int(y), int(x + w), int(y + h))
+    if platform.system() == 'Windows':
+        img = grab_screen_windows(int(x), int(y), int(x + w), int(y + h))
+    else:
+        img = grab_screen_linux(int(x), int(y), int(x + w), int(y + h))
 
     pic = img
 
