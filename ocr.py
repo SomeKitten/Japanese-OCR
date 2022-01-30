@@ -17,27 +17,6 @@ import zipfile
 import json
 import platform
 
-if platform.system() == 'Windows':
-    import d3dshot
-    d = d3dshot.create(capture_output="numpy")
-else:
-    LibName = 'prtscn.so'
-    AbsLibPath = os.path.dirname(
-        os.path.abspath(__file__)) + os.path.sep + LibName
-    grab = ctypes.CDLL(AbsLibPath)
-
-jam = Jamdict()
-
-win = Tk()
-win.overrideredirect(True)
-win.geometry("0x0")
-
-tokenizer_obj = dictionary.Dictionary(dict='full').create()
-mode = tokenizer.Tokenizer.SplitMode.A
-
-SCRIPT_DIR = Path(__file__).parent
-dictionary_map = {}
-
 
 def load_dictionary(dictionary):
     output_map = {}
@@ -127,9 +106,14 @@ def thresh_mask(channel):
 
 
 def thresh_apply(image):
-    mask = image[:, :] < 128
-    image[mask] = 0
-    return image
+    if np.average(image) < 128:
+        image = 255 - image
+
+    thresh = np.zeros((image.shape[0], image.shape[1]), np.uint8)
+    mask = image[:, :] > 128
+
+    thresh[mask] = 255
+    return thresh
 
 
 def clahe_contrast(img):
@@ -142,8 +126,13 @@ def clahe_contrast(img):
 
 
 def clahe_contrast_gray(img):
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    clahe = cv2.createCLAHE(
+        clipLimit=3.0, tileGridSize=(8, 8))
     return clahe.apply(img)
+
+
+def scale_contrast(img):
+    return cv2.convertScaleAbs(img, alpha=3, beta=0)
 
 
 def filter_image(image, inv=False):
@@ -160,10 +149,23 @@ def filter_image(image, inv=False):
 
 
 def filter_channels(image):
+    w = image.shape[1]
+    h = image.shape[0]
+
     b, g, r = cv2.split(image)
-    b = thresh_mask(clahe_contrast_gray(b))
-    g = thresh_mask(clahe_contrast_gray(g))
-    r = thresh_mask(clahe_contrast_gray(r))
+
+    b = thresh_apply(clahe_contrast_gray(b))
+    g = thresh_apply(clahe_contrast_gray(g))
+    r = thresh_apply(clahe_contrast_gray(r))
+
+    if use_scale_size:
+        b = cv2.resize(b, (0, 0), fx=scale_size/min(w, h),
+                       fy=scale_size/min(w, h), interpolation=cv2.INTER_NEAREST)
+        g = cv2.resize(g, (0, 0), fx=scale_size/min(w, h),
+                       fy=scale_size/min(w, h), interpolation=cv2.INTER_NEAREST)
+        r = cv2.resize(r, (0, 0), fx=scale_size/min(w, h),
+                       fy=scale_size/min(w, h), interpolation=cv2.INTER_NEAREST)
+
     return b, g, r
 
 
@@ -178,11 +180,11 @@ def text_from_channels(image):
     b, g, r = filter_channels(image)
     try:
         text_b = pytesseract.image_to_string(
-            b, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+            b, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 7")
         text_g = pytesseract.image_to_string(
-            g, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+            g, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 7")
         text_r = pytesseract.image_to_string(
-            r, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+            r, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 7")
         return b, g, r, filter_text(text_b), filter_text(text_g), filter_text(text_r)
     except RuntimeError as e:
         print(e)
@@ -192,7 +194,7 @@ def text_from_channels(image):
 def text_from_image(image, inv=False):
     img = filter_image(image, inv)
     text = pytesseract.image_to_string(
-        img, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+        img, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 7")
     return img, filter_text(text)
 
 
@@ -208,7 +210,7 @@ def lookup_text(text):
             return ("", "", "")
 
         look = jam.lookup(text, lookup_chars=False)
-    return (text, look.entries[0].senses[0].text().replace("/", "\n"), look.entries[0].kana_forms[0].text)
+    return (text, "\n".join([sense.text().replace("/", " / ") for sense in look.entries[0].senses]), look.entries[0].kana_forms[0].text)
 
 
 def lookup_text_sudachi(text):
@@ -221,7 +223,7 @@ def lookup_text_sudachi(text):
         if text not in dictionary_map:
             return ("", "", "")
     entry = dictionary_map[text][0]
-    return (entry[0], ' '.join(entry[5]), entry[1])
+    return (entry[0], "\n".join(entry[5]), entry[1])
 
 
 def cursor_search(x, y, w, h):
@@ -239,17 +241,27 @@ def cursor_search(x, y, w, h):
 
     # return text
 
-    img = cv2.resize(img, (0, 0), fx=30/h, fy=30/h)
-
     b, g, r, text_b, text_g, text_r = text_from_channels(img)
+
+    # pic = cv2.merge((b, g, r))
 
     # pic = np.append(np.append(b, g, axis=0), r, axis=0)
 
-    print("raw: " + text_b + "\n" + text_g + "\n" + text_r)
+    print("raw:\n" + text_b + "\n" + text_g + "\n" + text_r)
 
-    text_b = lookup_text_sudachi(text_b)
-    text_g = lookup_text_sudachi(text_g)
-    text_r = lookup_text_sudachi(text_r)
+    text_b_s = lookup_text_sudachi(text_b)
+    text_g_s = lookup_text_sudachi(text_g)
+    text_r_s = lookup_text_sudachi(text_r)
+    text_b = lookup_text(text_b)
+    text_g = lookup_text(text_g)
+    text_r = lookup_text(text_r)
+
+    if len(text_b_s[0]) >= len(text_b[0]):
+        text_b = text_b_s
+    if len(text_g_s[0]) >= len(text_g[0]):
+        text_g = text_g_s
+    if len(text_r_s[0]) >= len(text_r[0]):
+        text_r = text_r_s
 
     if text_b[0] != "" and len(text_b[0]) >= len(text_g[0]) and len(text_b[0]) >= len(text_r[0]):
         return text_b
@@ -306,6 +318,8 @@ def tesseract_loop():
             jp, en, pron = cursor_search(
                 x_min, y_min, int(x_max - x_min), int(y_max - y_min))
 
+            print(jp, en, pron)
+
             if jp != "none":
                 print("chose: " + jp)
 
@@ -341,17 +355,19 @@ def main_loop():
 
             w, h = int(x_max - x_min), int(y_max - y_min)
             win.geometry('%dx%d+%d+%d' %
-                         (2*w, 2*h, ctrl_x - w, ctrl_y - 2*h))
+                         (preview_scale*w, preview_scale*h, ctrl_x - preview_scale*w / 2, ctrl_y - preview_scale*h))
 
             pilimg = Image.fromarray(pic)
-            pilimg = pilimg.resize((2*w, 2*h), resample=Image.NEAREST)
+            pilimg = pilimg.resize(
+                (preview_scale*w, preview_scale*h), resample=Image.BICUBIC)
 
             tkimg = ImageTk.PhotoImage(image=pilimg)
 
             label1.image = tkimg
             label1.configure(image=tkimg)
 
-            label1.place(x=0, y=0, width=2*w, height=2*h)
+            label1.place(x=0, y=0, width=preview_scale *
+                         w, height=preview_scale*h)
 
             if tooltip_window:
                 label.config(text=tooltip_text)
@@ -376,6 +392,27 @@ def main():
     main_loop()
 
 
+if platform.system() == 'Windows':
+    import d3dshot
+    d = d3dshot.create(capture_output="numpy")
+else:
+    LibName = 'prtscn.so'
+    AbsLibPath = os.path.dirname(
+        os.path.abspath(__file__)) + os.path.sep + LibName
+    grab = ctypes.CDLL(AbsLibPath)
+
+jam = Jamdict()
+
+win = Tk()
+win.overrideredirect(True)
+win.geometry("0x0")
+
+tokenizer_obj = dictionary.Dictionary(dict='full').create()
+mode = tokenizer.Tokenizer.SplitMode.A
+
+SCRIPT_DIR = Path(__file__).parent
+dictionary_map = {}
+
 x = y = 0
 x1 = y1 = 1
 x_min = y_min = 0
@@ -384,7 +421,10 @@ x_max = y_max = 1
 ctrl_x = ctrl_y = 0
 
 min_size = 10
-max_size = 300
+max_size = 400
+scale_size = 128
+use_scale_size = False
+preview_scale = 2
 
 adjust_speed = 15
 
