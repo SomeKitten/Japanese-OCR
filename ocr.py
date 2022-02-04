@@ -21,12 +21,12 @@ import keyboard
 
 from PIL import Image, ImageTk, ImageDraw
 
-if platform.system() == 'Windows':
-    import d3dshot
-    d = d3dshot.create(capture_output="numpy")
 
-    def grab_screen(x1, y1, x2, y2):
-        return d.screenshot(region=(x1, y1, x2, y2))
+if platform.system() == 'Windows':
+    from PIL import ImageGrab
+
+    def grab_screen(x, y, x1, y1):
+        return ImageGrab.grab(bbox=(x, y, x1, y1))
 else:
     LibName = 'prtscn.so'
     AbsLibPath = os.path.dirname(
@@ -43,7 +43,7 @@ else:
 
         grab.getScreen(x1, y1, w, h, result)
         np_img = np.frombuffer(result, np.uint8).reshape(h, w, 3)
-        return np_img
+        return Image.fromarray(np_img)
 
 
 def get_grayscale(image):
@@ -313,9 +313,8 @@ class OCR:
                 if not self.ctrl_down:
                     self.ctrl_down = True
 
-                    bg = grab_screen(
+                    self.bg_pil = grab_screen(
                         0, 0, get_monitors()[0].width, get_monitors()[0].height)
-                    self.bg_pil = Image.fromarray(bg)
                     self.bg_rect = self.bg_pil.copy()
                     self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
 
@@ -323,8 +322,6 @@ class OCR:
                     self.select_window.wm_overrideredirect(True)
                     self.select_window.wm_geometry("%dx%d+%d+%d" %
                                                    (get_monitors()[0].width, get_monitors()[0].height, 0, 0))
-
-                    grab_screen(self.x_min, self.y_min, self.x_max, self.y_max)
 
                     self.select_label = Label(self.select_window)
                     self.bg_tk = ImageTk.PhotoImage(image=self.bg_rect)
