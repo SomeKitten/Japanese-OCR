@@ -1,102 +1,78 @@
 import _thread
 import ctypes
+import json
 import os
+import platform
 from tkinter import Label, Tk, Toplevel
-from PIL import Image, ImageTk
-import mouse
-import keyboard
-from screeninfo import get_monitors
-import pytesseract
+import zipfile
+from pathlib import Path
+
 import cv2
-import numpy as np
 from jamdict import Jamdict
+import numpy as np
+
+import pytesseract
+from screeninfo import get_monitors
+
 from sudachipy import tokenizer
 from sudachipy import dictionary
-from pathlib import Path
-import zipfile
-import json
-import platform
 
+import keyboard
 
-def load_dictionary(dictionary):
-    output_map = {}
-    archive = zipfile.ZipFile(dictionary, 'r')
+from PIL import Image, ImageTk, ImageDraw
 
-    result = list()
-    for file in archive.namelist():
-        if file.startswith('term'):
-            with archive.open(file) as f:
-                data = f.read()
-                d = json.loads(data.decode("utf-8"))
-                result.extend(d)
+if platform.system() == 'Windows':
+    import d3dshot
+    d = d3dshot.create(capture_output="numpy")
 
-    for entry in result:
-        if (entry[0] in output_map):
-            output_map[entry[0]].append(entry)
-        else:
-            # Using headword as key for finding the dictionary entry
-            output_map[entry[0]] = [entry]
-    return output_map
+    def grab_screen(x1, y1, x2, y2):
+        return d.screenshot(region=(x1, y1, x2, y2))
+else:
+    LibName = 'prtscn.so'
+    AbsLibPath = os.path.dirname(
+        os.path.abspath(__file__)) + os.path.sep + LibName
+    grab = ctypes.CDLL(AbsLibPath)
 
+    def grab_screen(x1, y1, x2, y2):
+        w, h = x2-x1, y2-y1
+        size = w * h
+        objlength = size * 3
 
-def setup():
-    global dictionary_map
-    dictionary_map = load_dictionary(
-        str(Path(SCRIPT_DIR, 'dictionaries', 'jmdict_english.zip')))
+        grab.getScreen.argtypes = []
+        result = (ctypes.c_ubyte*objlength)()
 
-
-def grab_screen_linux(x1, y1, x2, y2):
-    w, h = x2-x1, y2-y1
-    size = w * h
-    objlength = size * 3
-
-    grab.getScreen.argtypes = []
-    result = (ctypes.c_ubyte*objlength)()
-
-    grab.getScreen(x1, y1, w, h, result)
-    np_img = np.frombuffer(result, np.uint8).reshape(h, w, 3)
-    return np_img
-
-
-def grab_screen_windows(x1, y1, x2, y2):
-    return d.screenshot(region=(x1, y1, x2, y2))
-
-# get grayscale image
+        grab.getScreen(x1, y1, w, h, result)
+        np_img = np.frombuffer(result, np.uint8).reshape(h, w, 3)
+        return np_img
 
 
 def get_grayscale(image):
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
 
-# noise removal
 def remove_noise(image):
     return cv2.medianBlur(image, 5)
 
 
-# thresholding
 def thresholding(image):
     return cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
 
-# dilation
 def dilate(image):
     kernel = np.ones((5, 5), np.uint8)
     return cv2.dilate(image, kernel, iterations=1)
 
 
-# erosion
 def erode(image):
     kernel = np.ones((5, 5), np.uint8)
     return cv2.erode(image, kernel, iterations=1)
 
 
-# opening - erosion followed by dilation
 def opening(image):
     kernel = np.ones((5, 5), np.uint8)
     return cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
 
 
-# canny edge detection
 def canny(image):
     return cv2.Canny(image, 100, 200)
 
@@ -149,22 +125,11 @@ def filter_image(image, inv=False):
 
 
 def filter_channels(image):
-    w = image.shape[1]
-    h = image.shape[0]
-
     b, g, r = cv2.split(image)
 
     b = thresh_apply(clahe_contrast_gray(b))
     g = thresh_apply(clahe_contrast_gray(g))
     r = thresh_apply(clahe_contrast_gray(r))
-
-    if use_scale_size:
-        b = cv2.resize(b, (0, 0), fx=scale_size/min(w, h),
-                       fy=scale_size/min(w, h), interpolation=cv2.INTER_NEAREST)
-        g = cv2.resize(g, (0, 0), fx=scale_size/min(w, h),
-                       fy=scale_size/min(w, h), interpolation=cv2.INTER_NEAREST)
-        r = cv2.resize(r, (0, 0), fx=scale_size/min(w, h),
-                       fy=scale_size/min(w, h), interpolation=cv2.INTER_NEAREST)
 
     return b, g, r
 
@@ -201,7 +166,6 @@ def text_from_image(image, inv=False):
 def lookup_text(text):
     if text == '':
         return ("", "", "")
-    print("looking up: " + text)
     look = jam.lookup(text, lookup_chars=False)
     while len(look.entries) == 0 or len(look.entries[0].senses) == 0:
         text = text[:-1]
@@ -216,7 +180,6 @@ def lookup_text(text):
 def lookup_text_sudachi(text):
     if text == '':
         return ("", "", "")
-    print("looking up: " + text)
     if text not in dictionary_map:
         m = tokenizer_obj.tokenize(text, mode)[0]
         text = m.dictionary_form()
@@ -226,28 +189,8 @@ def lookup_text_sudachi(text):
     return (entry[0], "\n".join(entry[5]), entry[1])
 
 
-def cursor_search(x, y, w, h):
-    global pic
-    if platform.system() == 'Windows':
-        img = grab_screen_windows(int(x), int(y), int(x + w), int(y + h))
-    else:
-        img = grab_screen_linux(int(x), int(y), int(x + w), int(y + h))
-
-    pic = img
-
-    # pic, text = text_from_image(img)
-
-    # text = lookup_text_sudachi(text)
-
-    # return text
-
+def cursor_search(img):
     b, g, r, text_b, text_g, text_r = text_from_channels(img)
-
-    # pic = cv2.merge((b, g, r))
-
-    # pic = np.append(np.append(b, g, axis=0), r, axis=0)
-
-    print("raw:\n" + text_b + "\n" + text_g + "\n" + text_r)
 
     text_b_s = lookup_text_sudachi(text_b)
     text_g_s = lookup_text_sudachi(text_g)
@@ -273,172 +216,162 @@ def cursor_search(x, y, w, h):
         return ("none", "none", "none")
 
 
-def mouse_event(event):
-    global x, y, x1, y1, x_min, x_max, y_min, y_max
-    if isinstance(event, mouse.ButtonEvent) and keyboard.is_pressed("control"):
-        if event.event_type == 'down':
-            x, y = mouse.get_position()
-        if event.event_type == 'up':
-            x1, y1 = mouse.get_position()
+def load_dictionary(dictionary):
+    output_map = {}
+    archive = zipfile.ZipFile(dictionary, 'r')
 
-        x_min = min(x, x1)
-        x_max = max(x, x1)
-        y_min = min(y, y1)
-        y_max = max(y, y1)
+    result = list()
+    for file in archive.namelist():
+        if file.startswith('term'):
+            with archive.open(file) as f:
+                data = f.read()
+                d = json.loads(data.decode("utf-8"))
+                result.extend(d)
 
-        if x_min == x_max:
-            x_max += 1
-        if y_min == y_max:
-            y_max += 1
-
-        if x_max - x_min > max_size:
-            if event.event_type == "down":
-                x1 = x_min + max_size
-            if event.event_type == "up":
-                x = x_max - max_size
-            x_min = min(x, x1)
-            x_max = max(x, x1)
-            y_min = min(y, y1)
-            y_max = max(y, y1)
-        if y_max - y_min > max_size:
-            if event.event_type == "down":
-                y1 = y_min + max_size
-            if event.event_type == "up":
-                y = y_max - max_size
-            x_min = min(x, x1)
-            x_max = max(x, x1)
-            y_min = min(y, y1)
-            y_max = max(y, y1)
-
-
-def tesseract_loop():
-    global x_min, x_max, y_min, y_max, tooltip_text
-    while True:
-        if keyboard.is_pressed("control"):
-            jp, en, pron = cursor_search(
-                x_min, y_min, int(x_max - x_min), int(y_max - y_min))
-
-            print(jp, en, pron)
-
-            if jp != "none":
-                print("chose: " + jp)
-
-                tooltip_text = jp + "\n" + pron + "\n" + en
-
-
-def main_loop():
-    global ctrl_x, ctrl_y, label1, tooltip_window, select_window
-    mouse.hook(mouse_event)
-
-    while True:
-        if keyboard.is_pressed("control"):
-            if pressed == False:
-                ctrl_x, ctrl_y = mouse.get_position()
-                # creates a toplevel window
-                tooltip_window = Toplevel()
-                # Leaves only the label and removes the app window
-                tooltip_window.wm_overrideredirect(True)
-                tooltip_window.wm_geometry("+%d+%d" % mouse.get_position())
-
-                label = Label(tooltip_window, text="none", justify='left',
-                              background="#ffffff", relief='solid', borderwidth=1,
-                              wraplength=180)
-                label.pack(ipadx=1)
-
-                # creates a toplevel window
-                select_window = Toplevel()
-                select_window.wm_overrideredirect(True)
-                select_window.wm_geometry("%dx%d+%d+%d" % (get_monitors()
-                                                           [0].width, get_monitors()[0].height, 0, 0))
-                select_window.wait_visibility(select_window)
-                select_window.wm_attributes('-alpha', 0)
-
-            w, h = int(x_max - x_min), int(y_max - y_min)
-            win.geometry('%dx%d+%d+%d' %
-                         (preview_scale*w, preview_scale*h, ctrl_x - preview_scale*w / 2, ctrl_y - preview_scale*h))
-
-            pilimg = Image.fromarray(pic)
-            pilimg = pilimg.resize(
-                (preview_scale*w, preview_scale*h), resample=Image.BICUBIC)
-
-            tkimg = ImageTk.PhotoImage(image=pilimg)
-
-            label1.image = tkimg
-            label1.configure(image=tkimg)
-
-            label1.place(x=0, y=0, width=preview_scale *
-                         w, height=preview_scale*h)
-
-            if tooltip_window:
-                label.config(text=tooltip_text)
+    for entry in result:
+        if (entry[0] in output_map):
+            output_map[entry[0]].append(entry)
         else:
-            if tooltip_window:
-                tooltip_window.destroy()
-                tooltip_window = None
-            if select_window:
-                select_window.destroy()
-                select_window = None
-
-            win.geometry('%dx%d+%d+%d' % (0, 0, 0, 0))
-
-        pressed = keyboard.is_pressed("control")
-
-        win.update()
+            output_map[entry[0]] = [entry]
+    return output_map
 
 
-def main():
-    _thread.start_new_thread(tesseract_loop, ())
+class OCR:
+    x = y = mx = my = 0
+    x1 = y1 = 1
+    x_min = y_min = 0
+    x_max = y_max = 1
 
-    main_loop()
+    ctrl_down = False
+    mouse_down = False
+
+    select_window = None
+
+    select_label = None
+    tooltip_label = None
+
+    tooltip_text = "No text found"
+
+    def __init__(self, root):
+        self.root = root
+        self.dictionary_map = load_dictionary(
+            str(Path(SCRIPT_DIR, 'dictionaries', 'jmdict_english.zip')))
+
+        self.bg_pil = Image.new(
+            'RGB', (get_monitors()[0].width, get_monitors()[0].height))
+        self.bg_rect = Image.new(
+            'RGB', (get_monitors()[0].width, get_monitors()[0].height))
+        self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
+
+    def order_mouse(self):
+        self.x_min = min(self.x, self.x1)
+        self.x_max = max(self.x, self.x1)
+        self.y_min = min(self.y, self.y1)
+        self.y_max = max(self.y, self.y1)
+
+        if self.x_min == self.x_max:
+            self.x_max += 1
+        if self.y_min == self.y_max:
+            self.y_max += 1
+
+    def mouse_button_release(self, event):
+        if self.ctrl_down:
+            jp, en, pron = cursor_search(np.array(self.bg_pil.crop(
+                (self.x_min, self.y_min, self.x_max, self.y_max))))
+            if jp != "none":
+                self.tooltip_text = jp + "\n" + pron + "\n" + en
+            else:
+                self.tooltip_text = "No text found"
+
+    def mouse_motion(self, event):
+        self.mx, self.my = event.x, event.y
+
+    def mouse_motion_button(self, event):
+        if self.ctrl_down:
+            self.x1, self.y1 = event.x, event.y
+            self.mx, self.my = event.x, event.y
+
+            self.order_mouse()
+
+            self.bg_rect = self.bg_pil.copy()
+            img_draw = ImageDraw.Draw(self.bg_rect)
+            img_draw.rectangle(
+                [self.x_min, self.y_min, self.x_max, self.y_max], outline='red')
+
+    def mouse_button(self, event):
+        if self.ctrl_down:
+            self.mouse_down = True
+            self.x, self.y = event.x, event.y
+            self.x1 = self.x + 1
+            self.y1 = self.y + 1
+
+            self.order_mouse()
+
+    def main(self):
+        while True:
+            if keyboard.is_pressed("control"):
+                if not self.ctrl_down:
+                    self.ctrl_down = True
+
+                    bg = grab_screen(
+                        0, 0, get_monitors()[0].width, get_monitors()[0].height)
+                    self.bg_pil = Image.fromarray(bg)
+                    self.bg_rect = self.bg_pil.copy()
+                    self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
+
+                    self.select_window = Toplevel()
+                    self.select_window.wm_overrideredirect(True)
+                    self.select_window.wm_geometry("%dx%d+%d+%d" %
+                                                   (get_monitors()[0].width, get_monitors()[0].height, 0, 0))
+
+                    grab_screen(self.x_min, self.y_min, self.x_max, self.y_max)
+
+                    self.select_label = Label(self.select_window)
+                    self.bg_tk = ImageTk.PhotoImage(image=self.bg_rect)
+                    self.select_label.config(image=self.bg_tk)
+                    self.select_label.place(
+                        x=0, y=0, width=get_monitors()[0].width, height=get_monitors()[0].height)
+                    self.select_label.bind("<Button-1>", self.mouse_button)
+                    self.select_label.bind(
+                        "<B1-Motion>", self.mouse_motion_button)
+                    self.select_label.bind(
+                        "<Motion>", self.mouse_motion)
+                    self.select_label.bind(
+                        "<ButtonRelease-1>", self.mouse_button_release)
+
+                    self.tooltip_label = Label(self.select_window, text=self.tooltip_text, justify='left',
+                                               background="#ffffff", relief='solid', borderwidth=1,
+                                               wraplength=180)
+                    self.tooltip_label.place(x=self.mx, y=self.my -
+                                             self.tooltip_label.winfo_height() - 10)
+                self.bg_tk = ImageTk.PhotoImage(image=self.bg_rect)
+                self.select_label.config(image=self.bg_tk)
+
+                self.tooltip_label.place(x=self.mx, y=self.my -
+                                         self.tooltip_label.winfo_height() - 10)
+                self.tooltip_label.config(text=self.tooltip_text)
+
+                self.select_window.update()
+            else:
+                self.ctrl_down = False
+                if self.select_window is not None:
+                    self.select_window.destroy()
+                    self.select_window = None
+            self.root.update()
 
 
-if platform.system() == 'Windows':
-    import d3dshot
-    d = d3dshot.create(capture_output="numpy")
-else:
-    LibName = 'prtscn.so'
-    AbsLibPath = os.path.dirname(
-        os.path.abspath(__file__)) + os.path.sep + LibName
-    grab = ctypes.CDLL(AbsLibPath)
-
-jam = Jamdict()
+SCRIPT_DIR = Path(__file__).parent
 
 win = Tk()
 win.overrideredirect(True)
 win.geometry("0x0")
+win.wait_visibility(win)
+win.wm_attributes('-alpha', 0)
+ocr = OCR(win)
 
+jam = Jamdict()
+dictionary_map = {}
 tokenizer_obj = dictionary.Dictionary(dict='full').create()
 mode = tokenizer.Tokenizer.SplitMode.A
 
-SCRIPT_DIR = Path(__file__).parent
-dictionary_map = {}
-
-x = y = 0
-x1 = y1 = 1
-x_min = y_min = 0
-x_max = y_max = 1
-
-ctrl_x = ctrl_y = 0
-
-min_size = 10
-max_size = 400
-scale_size = 128
-use_scale_size = False
-preview_scale = 2
-
-adjust_speed = 15
-
-label1 = Label(win)
-label1.place(x=0, y=0, width=2*(x_max - x_min), height=2*(y_max - y_min))
-
-pressed = False
-
-tooltip_window = None
-select_window = None
-label = None
-pic = np.zeros((1, 1, 3), dtype=np.uint8)
-
-tooltip_text = ""
-
-setup()
-main()
+ocr.main()
