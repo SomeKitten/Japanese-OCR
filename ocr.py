@@ -145,12 +145,19 @@ def text_from_channels(image):
     b, g, r = filter_channels(image)
     try:
         text_b = pytesseract.image_to_string(
-            b, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 7")
+            b, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
         text_g = pytesseract.image_to_string(
-            g, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 7")
+            g, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
         text_r = pytesseract.image_to_string(
-            r, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 7")
-        return b, g, r, filter_text(text_b), filter_text(text_g), filter_text(text_r)
+            r, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+        text_b2 = pytesseract.image_to_string(
+            b, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+        text_g2 = pytesseract.image_to_string(
+            g, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+        text_r2 = pytesseract.image_to_string(
+            r, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+
+        return b, g, r, filter_text(text_b), filter_text(text_g), filter_text(text_r), filter_text(text_b2), filter_text(text_g2), filter_text(text_r2)
     except RuntimeError as e:
         print(e)
         return b, g, r, '', '', ''
@@ -184,36 +191,34 @@ def lookup_text_sudachi(text):
         m = tokenizer_obj.tokenize(text, mode)[0]
         text = m.dictionary_form()
         if text not in dictionary_map:
-            return ("", "", "")
+            return lookup_text(text)
     entry = dictionary_map[text][0]
     return (entry[0], "\n".join(entry[5]), entry[1])
 
 
 def cursor_search(img):
-    b, g, r, text_b, text_g, text_r = text_from_channels(img)
+    b, g, r, text_b, text_g, text_r, text_b2, text_g2, text_r2 = text_from_channels(
+        img)
 
-    text_b_s = lookup_text_sudachi(text_b)
-    text_g_s = lookup_text_sudachi(text_g)
-    text_r_s = lookup_text_sudachi(text_r)
-    text_b = lookup_text(text_b)
-    text_g = lookup_text(text_g)
-    text_r = lookup_text(text_r)
+    print(text_b, text_g, text_r)
+    print(text_b2, text_g2, text_r2)
 
-    if len(text_b_s[0]) >= len(text_b[0]):
-        text_b = text_b_s
-    if len(text_g_s[0]) >= len(text_g[0]):
-        text_g = text_g_s
-    if len(text_r_s[0]) >= len(text_r[0]):
-        text_r = text_r_s
+    texts = [
+        lookup_text_sudachi(text_b), lookup_text_sudachi(
+            text_g), lookup_text_sudachi(text_r),
+        lookup_text_sudachi(text_b2), lookup_text_sudachi(
+            text_g2), lookup_text_sudachi(text_r2),
+        lookup_text(text_b), lookup_text(text_g), lookup_text(text_r),
+        lookup_text(text_b2), lookup_text(text_g2), lookup_text(text_r2)]
 
-    if text_b[0] != "" and len(text_b[0]) >= len(text_g[0]) and len(text_b[0]) >= len(text_r[0]):
-        return text_b
-    elif text_g[0] != "" and len(text_g[0]) >= len(text_b[0]) and len(text_g[0]) >= len(text_r[0]):
-        return text_g
-    elif text_r[0] != "" and len(text_r[0]) >= len(text_b[0]) and len(text_r[0]) >= len(text_g[0]):
-        return text_r
-    else:
-        return ("none", "none", "none")
+    texts = [text for text in texts if text[0] != '']
+
+    if len(texts) == 0:
+        return ("None", "None", "None")
+
+    texts = sorted(texts, key=lambda x: len(x[0]), reverse=True)
+
+    return (texts[0][0], texts[0][1], texts[0][2])
 
 
 def load_dictionary(dictionary):
@@ -369,6 +374,6 @@ ocr = OCR(win)
 jam = Jamdict()
 dictionary_map = {}
 tokenizer_obj = dictionary.Dictionary(dict='full').create()
-mode = tokenizer.Tokenizer.SplitMode.A
+mode = tokenizer.Tokenizer.SplitMode.B
 
 ocr.main()
