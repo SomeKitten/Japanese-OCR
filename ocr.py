@@ -1,4 +1,3 @@
-import _thread
 import ctypes
 import json
 import os
@@ -150,17 +149,20 @@ def text_from_channels(image):
             g, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
         text_r = pytesseract.image_to_string(
             r, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
-        text_b2 = pytesseract.image_to_string(
-            b, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
-        text_g2 = pytesseract.image_to_string(
-            g, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
-        text_r2 = pytesseract.image_to_string(
-            r, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+        # text_b2 = pytesseract.image_to_string(
+        #     b, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+        # text_g2 = pytesseract.image_to_string(
+        #     g, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+        # text_r2 = pytesseract.image_to_string(
+        #     r, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+        text_b2 = ""
+        text_g2 = ""
+        text_r2 = ""
 
         return b, g, r, filter_text(text_b), filter_text(text_g), filter_text(text_r), filter_text(text_b2), filter_text(text_g2), filter_text(text_r2)
     except RuntimeError as e:
         print(e)
-        return b, g, r, '', '', ''
+        return b, g, r, '', '', '', '', '', ''
 
 
 def text_from_image(image, inv=False):
@@ -199,9 +201,6 @@ def lookup_text_sudachi(text):
 def cursor_search(img):
     b, g, r, text_b, text_g, text_r, text_b2, text_g2, text_r2 = text_from_channels(
         img)
-
-    print(text_b, text_g, text_r)
-    print(text_b2, text_g2, text_r2)
 
     texts = [
         lookup_text_sudachi(text_b), lookup_text_sudachi(
@@ -259,6 +258,9 @@ class OCR:
 
     def __init__(self, root):
         self.root = root
+
+        pytesseract.pytesseract.tesseract_cmd = str(
+            Path(SCRIPT_DIR, 'tesseract', 'tesseract.exe'))
         self.dictionary_map = load_dictionary(
             str(Path(SCRIPT_DIR, 'dictionaries', 'jmdict_english.zip')))
 
@@ -283,7 +285,7 @@ class OCR:
         if self.ctrl_down:
             jp, en, pron = cursor_search(np.array(self.bg_pil.crop(
                 (self.x_min, self.y_min, self.x_max, self.y_max))))
-            if jp != "none":
+            if jp != "None":
                 self.tooltip_text = jp + "\n" + pron + "\n" + en
             else:
                 self.tooltip_text = "No text found"
