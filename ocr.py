@@ -18,31 +18,18 @@ from sudachipy import dictionary
 
 import keyboard
 
-from PIL import Image, ImageTk, ImageDraw
+from PIL import Image, ImageTk, ImageDraw, ImageGrab
 
+SCRIPT_DIR = Path(__file__).parent
 
 if platform.system() == 'Windows':
-    from PIL import ImageGrab
 
-    def grab_screen(x, y, x1, y1):
-        return ImageGrab.grab(bbox=(x, y, x1, y1))
-else:
-    LibName = 'prtscn.so'
-    AbsLibPath = os.path.dirname(
-        os.path.abspath(__file__)) + os.path.sep + LibName
-    grab = ctypes.CDLL(AbsLibPath)
+    pytesseract.pytesseract.tesseract_cmd = str(
+        Path(SCRIPT_DIR, 'tesseract', 'tesseract.exe'))
 
-    def grab_screen(x1, y1, x2, y2):
-        w, h = x2-x1, y2-y1
-        size = w * h
-        objlength = size * 3
 
-        grab.getScreen.argtypes = []
-        result = (ctypes.c_ubyte*objlength)()
-
-        grab.getScreen(x1, y1, w, h, result)
-        np_img = np.frombuffer(result, np.uint8).reshape(h, w, 3)
-        return Image.fromarray(np_img)
+def grab_screen(x, y, x1, y1):
+    return ImageGrab.grab(bbox=(x, y, x1, y1))
 
 
 def get_grayscale(image):
@@ -259,8 +246,6 @@ class OCR:
     def __init__(self, root):
         self.root = root
 
-        pytesseract.pytesseract.tesseract_cmd = str(
-            Path(SCRIPT_DIR, 'tesseract', 'tesseract.exe'))
         self.dictionary_map = load_dictionary(
             str(Path(SCRIPT_DIR, 'dictionaries', 'jmdict_english.zip')))
 
@@ -363,8 +348,6 @@ class OCR:
                     self.select_window = None
             self.root.update()
 
-
-SCRIPT_DIR = Path(__file__).parent
 
 win = Tk()
 win.overrideredirect(True)
