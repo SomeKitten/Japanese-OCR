@@ -1,7 +1,8 @@
 import json
 import os
 import platform
-from tkinter import Label, Tk, Toplevel
+import time
+from tkinter import BOTH, TOP, Button, Label, Tk, Toplevel, font
 import zipfile
 from pathlib import Path
 
@@ -232,7 +233,7 @@ class OCR:
     x_min = y_min = 0
     x_max = y_max = 1
 
-    ctrl_down = False
+    key_down = False
     mouse_down = False
 
     select_window = None
@@ -242,17 +243,51 @@ class OCR:
 
     tooltip_text = "No text found"
 
+    closed = False
+
+    hotkey = ""
+
     def __init__(self, root):
         self.root = root
 
+        print("Loading dictionary...")
         self.dictionary_map = load_dictionary(
             str(Path(SCRIPT_DIR, 'dictionaries', 'jmdict_english.zip')))
 
+        print("Initializing defaults for image processing...")
         self.bg_pil = Image.new(
             'RGB', (get_monitors()[0].width, get_monitors()[0].height))
         self.bg_rect = Image.new(
             'RGB', (get_monitors()[0].width, get_monitors()[0].height))
         self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
+
+        self.button_font = font.Font(
+            self.root, family='Arial', size=12, weight='bold')
+        self.hotkey_button = Button(self.root, text="Set Activation Hotkey")
+        self.hotkey_button.config(font=self.button_font)
+        self.hotkey_button.pack(side=TOP, fill=BOTH, expand=True)
+
+        self.hotkey_button.bind("<Button-1>", self.set_hotkey)
+
+        self.root.bind('<Configure>', self.on_resize)
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def on_resize(self, event):
+        button_width = self.hotkey_button.winfo_width()
+        button_height = self.hotkey_button.winfo_height()
+
+        self.button_font['size'] = min(button_width // 16, button_height // 2)
+
+    def on_close(self):
+        self.closed = True
+        self.root.destroy()
+        if self.select_window is not None:
+            self.select_window.destroy()
+            self.select_window = None
+
+    def set_hotkey(self, event):
+        self.hotkey = keyboard.read_hotkey(suppress=False)
+        self.hotkey_button.config(text=self.hotkey)
 
     def order_mouse(self):
         self.x_min = min(self.x, self.x1)
@@ -266,7 +301,7 @@ class OCR:
             self.y_max += 1
 
     def mouse_button_release(self, event):
-        if self.ctrl_down:
+        if self.key_down:
             jp, en, pron = cursor_search(np.array(self.bg_pil.crop(
                 (self.x_min, self.y_min, self.x_max, self.y_max))))
             if jp != "None":
@@ -278,7 +313,7 @@ class OCR:
         self.mx, self.my = event.x, event.y
 
     def mouse_motion_button(self, event):
-        if self.ctrl_down:
+        if self.key_down:
             self.x1, self.y1 = event.x, event.y
             self.mx, self.my = event.x, event.y
 
@@ -290,7 +325,7 @@ class OCR:
                 [self.x_min, self.y_min, self.x_max, self.y_max], outline='red')
 
     def mouse_button(self, event):
-        if self.ctrl_down:
+        if self.key_down:
             self.mouse_down = True
             self.x, self.y = event.x, event.y
             self.x1 = self.x + 1
@@ -299,10 +334,16 @@ class OCR:
             self.order_mouse()
 
     def main(self):
+        print("Initialization complete!")
         while True:
-            if keyboard.is_pressed("control"):
-                if not self.ctrl_down:
-                    self.ctrl_down = True
+            if self.closed:
+                return
+            if self.hotkey == "":
+                self.root.update()
+                continue
+            if keyboard.is_pressed(self.hotkey):
+                if not self.key_down:
+                    self.key_down = True
 
                     self.bg_pil = grab_screen(
                         0, 0, get_monitors()[0].width, get_monitors()[0].height)
@@ -343,22 +384,27 @@ class OCR:
 
                 self.select_window.update()
             else:
-                self.ctrl_down = False
+                self.key_down = False
                 if self.select_window is not None:
                     self.select_window.destroy()
                     self.select_window = None
+
             self.root.update()
 
 
+print("Starting...")
 win = Tk()
-win.overrideredirect(True)
-win.geometry("0x0")
-win.wait_visibility(win)
-win.wm_attributes('-alpha', 0)
+win.title("Japanese -> English")
+win.geometry("%dx%d+%d+%d" %
+             (get_monitors()[0].width / 4, get_monitors()[0].width / 32, 0, 0))
+win.resizable(False, False)
 ocr = OCR(win)
 
+print("Loading jamdict...")
 jam = Jamdict()
 dictionary_map = {}
+
+print("Loading sudachidict_full...")
 tokenizer_obj = dictionary.Dictionary(dict="full").create()
 mode = tokenizer.Tokenizer.SplitMode.B
 
