@@ -1,4 +1,3 @@
-import ctypes
 import json
 import os
 import platform
@@ -20,7 +19,7 @@ import keyboard
 
 from PIL import Image, ImageTk, ImageDraw, ImageGrab
 
-SCRIPT_DIR = Path(__file__).parent
+SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 if platform.system() == 'Windows':
 
@@ -358,7 +357,7 @@ ocr = OCR(win)
 
 jam = Jamdict()
 dictionary_map = {}
-tokenizer_obj = dictionary.Dictionary(dict='full').create()
+tokenizer_obj = dictionary.Dictionary(dict="full").create()
 mode = tokenizer.Tokenizer.SplitMode.B
 
 ocr.main()
