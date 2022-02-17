@@ -332,6 +332,8 @@ class OCR:
                                                wraplength=180)
                     self.tooltip_label.place(x=self.mx, y=self.my -
                                              self.tooltip_label.winfo_height() - 10)
+
+                    self.select_window.wm_attributes('-topmost', True)
                 self.bg_tk = ImageTk.PhotoImage(image=self.bg_rect)
                 self.select_label.config(image=self.bg_tk)
 
