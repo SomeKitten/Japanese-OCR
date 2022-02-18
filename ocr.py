@@ -18,7 +18,7 @@ from sudachipy import dictionary
 
 import keyboard
 
-from PIL import Image, ImageTk, ImageDraw, ImageGrab
+from PIL import Image, ImageTk, ImageDraw, ImageGrab, ImageChops
 
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -45,17 +45,17 @@ def thresholding(image):
 
 
 def dilate(image):
-    kernel = np.ones((5, 5), np.uint8)
+    kernel = np.ones((3, 3), np.uint8)
     return cv2.dilate(image, kernel, iterations=1)
 
 
 def erode(image):
-    kernel = np.ones((5, 5), np.uint8)
+    kernel = np.ones((3, 3), np.uint8)
     return cv2.erode(image, kernel, iterations=1)
 
 
 def opening(image):
-    kernel = np.ones((5, 5), np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     return cv2.morphologyEx(image, cv2.MORPH_OPEN, kernel)
 
 
@@ -68,9 +68,6 @@ def thresh_mask(channel):
 
 
 def thresh_apply(image):
-    if np.average(image) < 128:
-        image = 255 - image
-
     thresh = np.zeros((image.shape[0], image.shape[1]), np.uint8)
     mask = image[:, :] > 128
 
@@ -87,6 +84,18 @@ def clahe_contrast(img):
     return cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
 
 
+def idk_contrast(img):
+    min = np.min(img)
+    max = np.max(img)
+
+    cont = 255 / (max - min) * (img - min)
+
+    print(img.shape)
+    print(cont.shape)
+
+    return cont.astype(np.uint8)
+
+
 def clahe_contrast_gray(img):
     clahe = cv2.createCLAHE(
         clipLimit=3.0, tileGridSize=(8, 8))
@@ -97,15 +106,96 @@ def scale_contrast(img):
     return cv2.convertScaleAbs(img, alpha=3, beta=0)
 
 
-def filter_image(image, inv=False):
-    contrast = clahe_contrast(image)
+def houghLines(img):
+    return cv2.HoughLinesP(img, 1, np.pi / 180, 100)
 
-    gray = get_grayscale(contrast)
-    if inv:
-        gray = 255 - gray
-    thresh = thresh_apply(gray)
 
-    thresh2 = thresholding(thresh)
+def scale(img):
+    if min(img.shape) < 100:
+        return cv2.resize(img, (int(img.shape[1] * 3), int(img.shape[0] * 3)), interpolation=cv2.INTER_CUBIC)
+    else:
+        return img
+
+
+def scale2(img):
+    if min(img.shape) > 100:
+        return cv2.resize(img, (int(img.shape[1] / 3), int(img.shape[0] / 3)), interpolation=cv2.INTER_CUBIC)
+    else:
+        return img
+
+
+def trim(im):
+    im = Image.fromarray(im)
+    bg = Image.new(im.mode, im.size, im.getpixel((0, 0)))
+    diff = ImageChops.difference(im, bg)
+    diff = ImageChops.add(diff, diff, 2.0, -100)
+    bbox = diff.getbbox()
+    if bbox:
+        cropped = im.crop(bbox)
+        bg = Image.new(
+            im.mode, (bbox[2] - bbox[0] + 20, bbox[3] - bbox[1] + 20), im.getpixel((0, 0)))
+        bg.paste(cropped, (10, 10))
+        return np.array(bg)
+    else:
+        return np.array(im)
+
+
+def fill_contour(img):
+    cnts = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+
+    for c in cnts:
+        cv2.drawContours(img, [c], 0, (255, 255, 255), -1)
+
+    return img
+
+
+def line_contour(img):
+    cnts = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+
+    bg = np.zeros((img.shape[0], img.shape[1]), np.uint8)
+
+    for c in cnts:
+        cv2.drawContours(bg, [c], 0, 255, 1)
+
+    return bg
+
+
+def sharpen(image):
+    blur = cv2.GaussianBlur(image, (0, 0), 3)
+    return cv2.addWeighted(image, 1.5, blur, -0.5, 0)
+
+
+def unsharp_mask(image):
+    amount = 5.0
+    blurred = cv2.GaussianBlur(image, (3, 3), 5.0)
+    return (amount + 1) * image - amount * blurred
+
+
+def filter_image(image):
+    gray = get_grayscale(image)
+
+    cont = idk_contrast(gray)
+
+    if cont[0][0] > 128:
+        cont = 255 - cont
+
+    scl = scale(cont)
+
+    thresh = thresh_apply(scl)
+
+    thin = cv2.ximgproc.thinning(thresh)
+
+    dil = dilate(thin)
+
+    trm = trim(dil)
+
+    scl2 = scale2(trm)
+
+    thresh2 = thresholding(scl2)
+
+    thresh2 = 255 - thresh2
 
     return thresh2
 
@@ -129,34 +219,55 @@ def filter_text(text):
 
 def text_from_channels(image):
     b, g, r = filter_channels(image)
-    try:
-        text_b = pytesseract.image_to_string(
-            b, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
-        text_g = pytesseract.image_to_string(
-            g, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
-        text_r = pytesseract.image_to_string(
-            r, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
-        # text_b2 = pytesseract.image_to_string(
-        #     b, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
-        # text_g2 = pytesseract.image_to_string(
-        #     g, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
-        # text_r2 = pytesseract.image_to_string(
-        #     r, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
-        text_b2 = ""
-        text_g2 = ""
-        text_r2 = ""
 
-        return b, g, r, filter_text(text_b), filter_text(text_g), filter_text(text_r), filter_text(text_b2), filter_text(text_g2), filter_text(text_r2)
+    try:
+        if np.shape(image)[0] <= np.shape(image)[1]:
+            text_b = pytesseract.image_to_string(
+                b, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+            text_g = pytesseract.image_to_string(
+                g, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+            text_r = pytesseract.image_to_string(
+                r, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
+        else:
+            text_b = pytesseract.image_to_string(
+                b, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+            text_g = pytesseract.image_to_string(
+                g, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+            text_r = pytesseract.image_to_string(
+                r, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+
+        return filter_text(text_b), filter_text(text_g), filter_text(text_r)
     except RuntimeError as e:
         print(e)
-        return b, g, r, '', '', '', '', '', ''
+        return b, g, r, '', '', ''
 
 
-def text_from_image(image, inv=False):
-    img = filter_image(image, inv)
-    text = pytesseract.image_to_string(
-        img, lang="jpn", timeout=0.5, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 7")
-    return img, filter_text(text)
+def text_from_image(image):
+    img = filter_image(image)
+
+    if np.shape(image)[0] <= np.shape(image)[1]:
+        data = pytesseract.image_to_data(
+            img, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 6", output_type=pytesseract.Output.DICT)
+    else:
+        data = pytesseract.image_to_data(
+            img, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5", output_type=pytesseract.Output.DICT)
+
+    print(data)
+
+    text = ""
+    start = len(data["conf"]) - data["conf"][::-1].index(-1)
+    for i in range(start, len(data["conf"])):
+        # to remove duplicate kana
+        if data["conf"][i] < np.mean(data["conf"][start:]) * 0.8:
+            if len(data["text"][i]) > 1 and data["text"][i][0] == data["text"][i][0]:
+                text += data["text"][i][0]
+            continue
+
+        text += data["text"][i]
+
+    print(text)
+
+    return filter_text(text)
 
 
 def lookup_text(text):
@@ -186,16 +297,9 @@ def lookup_text_sudachi(text):
 
 
 def cursor_search(img):
-    b, g, r, text_b, text_g, text_r, text_b2, text_g2, text_r2 = text_from_channels(
-        img)
+    text = text_from_image(img)
 
-    texts = [
-        lookup_text_sudachi(text_b), lookup_text_sudachi(
-            text_g), lookup_text_sudachi(text_r),
-        lookup_text_sudachi(text_b2), lookup_text_sudachi(
-            text_g2), lookup_text_sudachi(text_r2),
-        lookup_text(text_b), lookup_text(text_g), lookup_text(text_r),
-        lookup_text(text_b2), lookup_text(text_g2), lookup_text(text_r2)]
+    texts = [lookup_text_sudachi(text), lookup_text(text)]
 
     texts = [text for text in texts if text[0] != '']
 
@@ -348,7 +452,6 @@ class OCR:
                     self.bg_pil = grab_screen(
                         0, 0, get_monitors()[0].width, get_monitors()[0].height)
                     self.bg_rect = self.bg_pil.copy()
-                    self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
 
                     self.select_window = Toplevel()
                     self.select_window.wm_overrideredirect(True)
