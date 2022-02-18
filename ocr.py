@@ -125,6 +125,7 @@ def scale2(img):
 
 
 def trim(im):
+    border = 50
     im = Image.fromarray(im)
     bg = Image.new(im.mode, im.size, im.getpixel((0, 0)))
     diff = ImageChops.difference(im, bg)
@@ -133,8 +134,8 @@ def trim(im):
     if bbox:
         cropped = im.crop(bbox)
         bg = Image.new(
-            im.mode, (bbox[2] - bbox[0] + 20, bbox[3] - bbox[1] + 20), im.getpixel((0, 0)))
-        bg.paste(cropped, (10, 10))
+            im.mode, (bbox[2] - bbox[0] + border*2, bbox[3] - bbox[1] + border*2), im.getpixel((0, 0)))
+        bg.paste(cropped, (border, border))
         return np.array(bg)
     else:
         return np.array(im)
@@ -459,7 +460,6 @@ class OCR:
                                                    (get_monitors()[0].width, get_monitors()[0].height, 0, 0))
 
                     self.select_label = Label(self.select_window)
-                    self.bg_tk = ImageTk.PhotoImage(image=self.bg_rect)
                     self.select_label.config(image=self.bg_tk)
                     self.select_label.place(
                         x=0, y=0, width=get_monitors()[0].width, height=get_monitors()[0].height)
