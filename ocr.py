@@ -256,7 +256,7 @@ def text_from_image(image):
     print(data)
 
     text = ""
-    start = len(data["conf"]) - data["conf"][::-1].index(-1)
+    start = len(data["conf"]) - data["conf"][::-1].index('-1')
     for i in range(start, len(data["conf"])):
         # to remove duplicate kana
         if data["conf"][i] < np.mean(data["conf"][start:]) * 0.8:
