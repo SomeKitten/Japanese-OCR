@@ -1,10 +1,15 @@
+import asyncio
+import enum
 import json
+from math import floor
 import os
 import platform
-import time
 from tkinter import BOTH, TOP, Button, Label, Tk, Toplevel, font
+from tkinterdnd2 import DND_FILES, TkinterDnD
 import zipfile
 from pathlib import Path
+from pdf2image import convert_from_path
+import tempfile
 
 import cv2
 from jamdict import Jamdict
@@ -45,8 +50,13 @@ def thresholding(image):
 
 
 def dilate(image):
-    kernel = np.ones((3, 3), np.uint8)
+    kernel = np.ones((5, 5), np.uint8)
     return cv2.dilate(image, kernel, iterations=1)
+
+
+def dilate2(image):
+    kernel = np.ones((3, 3), np.uint8)
+    return cv2.dilate(image, kernel, iterations=3)
 
 
 def erode(image):
@@ -75,6 +85,14 @@ def thresh_apply(image):
     return thresh
 
 
+def thresh_apply2(image):
+    thresh = np.zeros((image.shape[0], image.shape[1]), np.uint8)
+    mask = image[:, :] > 100
+
+    thresh[mask] = 255
+    return thresh
+
+
 def clahe_contrast(img):
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
@@ -85,13 +103,12 @@ def clahe_contrast(img):
 
 
 def idk_contrast(img):
-    min = np.min(img)
-    max = np.max(img)
+    arr = img[img != 0]
+
+    min = np.min(arr)
+    max = np.max(arr)
 
     cont = 255 / (max - min) * (img - min)
-
-    print(img.shape)
-    print(cont.shape)
 
     return cont.astype(np.uint8)
 
@@ -124,8 +141,7 @@ def scale2(img):
         return img
 
 
-def trim(im):
-    border = 50
+def trim(im, border):
     im = Image.fromarray(im)
     bg = Image.new(im.mode, im.size, im.getpixel((0, 0)))
     diff = ImageChops.difference(im, bg)
@@ -151,14 +167,59 @@ def fill_contour(img):
     return img
 
 
-def line_contour(img):
+def line_contour_tree(img):
+    cnts = cv2.findContours(img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+
+    bg = np.zeros((img.shape[0], img.shape[1]), np.uint8)
+
+    purged_cnts = []
+
+    for c, cnt in enumerate(cnts):
+        area = cv2.contourArea(cnt)
+        if area > (img.shape[0] / 20 * img.shape[1] / 20) and area < (img.shape[0] / 3 * img.shape[1] / 3):
+            purged_cnts.append(cnt)
+
+    cv2.drawContours(bg, purged_cnts, -1, 255, 3)
+
+    return bg
+
+
+def line_contour_tree2(img):
+    cnts, hierarchy = cv2.findContours(
+        img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    bg = np.zeros((img.shape[0], img.shape[1]), np.uint8)
+
+    purged_cnts = []
+
+    for c, cnt in enumerate(cnts):
+        area = cv2.contourArea(cnt)
+        if area > (img.shape[0] / 20 * img.shape[1] / 20) and area < (img.shape[0] / 3 * img.shape[1] / 3) and hierarchy[0][c][2] == -1:
+            purged_cnts.append(cnt)
+
+    cv2.drawContours(bg, purged_cnts, -1, 255, 3)
+
+    return purged_cnts
+
+
+def line_contour_ext(img):
     cnts = cv2.findContours(img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cnts = cnts[0] if len(cnts) == 2 else cnts[1]
 
     bg = np.zeros((img.shape[0], img.shape[1]), np.uint8)
 
-    for c in cnts:
-        cv2.drawContours(bg, [c], 0, 255, 1)
+    purged_cnts = []
+
+    for cnt in cnts:
+        area = cv2.contourArea(cnt)
+        if area > (img.shape[0] / 20 * img.shape[1] / 20) and area < (img.shape[0] / 3 * img.shape[1] / 3):
+            purged_cnts.append(cnt)
+
+    print(cnts)
+    print(purged_cnts)
+
+    cv2.drawContours(bg, cnts, -1, 255, 3)
 
     return bg
 
@@ -174,73 +235,183 @@ def unsharp_mask(image):
     return (amount + 1) * image - amount * blurred
 
 
+def remove_edge_lines(img):
+    cnts = cv2.findContours(img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = cnts[0] if len(cnts) == 2 else cnts[1]
+
+    mask = np.zeros((img.shape[0], img.shape[1]), np.uint8)
+
+    for cnt in cnts:
+        rect = cv2.boundingRect(cnt)
+        if rect[0] < img.shape[1] / 2 and rect[0] + rect[2] > img.shape[1] / 2 and rect[1] < img.shape[0] / 2 and rect[1] + rect[3] > img.shape[0] / 2:
+            cv2.drawContours(mask, [cnt], 0, (255, 255, 255), -1)
+
+    out_img = 255-cv2.bitwise_and(255-img, mask)
+
+    return out_img
+
+
+def furigana_removal(img):
+    imgs = []
+
+    start = -1
+    last = 0
+    for c, col in enumerate(img.T):
+        if np.min(col) < 255:
+            continue
+
+        start = start + 1
+        if c - start > len(img.T) / 10:
+            imgs.append(img.T[start:c].T)
+            last = c
+        start = c
+
+    if np.average(img.T[-1]) != 255 and len(img.T) - last > len(img.T) / 10:
+        if last == 0:
+            imgs.append(img)
+        else:
+            imgs.append(img.T[start:].T)
+
+    if len(imgs) == 0:
+        return imgs
+
+    max_len = [len(i.T) for i in imgs]
+    max_len = np.max(max_len)
+
+    purged_imgs = []
+
+    for i in imgs:
+        if len(i.T) > max_len * 0.8:
+            purged_imgs.append(i)
+
+    return purged_imgs
+
+
 def filter_image(image):
+    cont = idk_contrast(image)
+
+    thresh = thresh_apply2(cont)
+
+    removed = remove_edge_lines(thresh)
+
+    trimmed = trim(removed, 0)
+
+    images = furigana_removal(trimmed)
+
+    for i, img in enumerate(images):
+        images[i] = trim(img, 30)
+
+    return images
+
+
+def get_text_bubbles(image):
     gray = get_grayscale(image)
 
-    cont = idk_contrast(gray)
+    # preprocessing
+    thresh = thresh_apply(gray)
+    inv = cv2.bitwise_not(thresh)
+    dil = dilate(inv)
+    inv2 = cv2.bitwise_not(dil)
 
-    if cont[0][0] > 128:
-        cont = 255 - cont
+    # bubble detection
+    cont = line_contour_tree(inv2)
+    cnts = line_contour_tree2(cont)
 
-    scl = scale(cont)
+    # postprocessing(?)
 
-    thresh = thresh_apply(scl)
+    purged_cnts = []
 
-    thin = cv2.ximgproc.thinning(thresh)
+    for c, cnt in enumerate(cnts):
+        crop1 = 0.1
+        crop2 = 0.15
 
-    dil = dilate(thin)
+        bound = cv2.boundingRect(cnt)
 
-    trm = trim(dil)
+        cropped_gray = gray.copy()[bound[1]:bound[1] + bound[3],
+                                   bound[0]:bound[0] + bound[2]]
 
-    scl2 = scale2(trm)
+        cropped = gray.copy()[bound[1]:bound[1] + bound[3],
+                              bound[0]:bound[0] + bound[2]]
+        cropped1 = gray.copy()[int(bound[1] + bound[3]*crop1):int(bound[1] + bound[3]*(1-crop1)),
+                               int(bound[0] + bound[2]*crop1):int(bound[0] + bound[2]*(1-crop1))]
+        cropped2 = gray.copy()[int(bound[1] + bound[3]*crop2):int(bound[1] + bound[3]*(1-crop2)),
+                               int(bound[0] + bound[2]*crop2):int(bound[0] + bound[2]*(1-crop2))]
 
-    thresh2 = thresholding(scl2)
+        cropped[cropped < 250] = 0
 
-    thresh2 = 255 - thresh2
+        cropped1[cropped1 < 250] = 0
+        cropped2[cropped2 < 250] = 0
 
-    return thresh2
+        avg = np.average(cropped)
+
+        avg1 = np.average(cropped1)
+        avg2 = np.average(cropped2)
+
+        if not (avg > 128 and avg1 > avg2):
+            continue
+
+        purged_cnts.append(cnt)
+
+        filtered = filter_image(cropped_gray)
+        text = text_from_lines(filtered, c)
+
+        if text == "":
+            continue
+
+        print(c, text)
+
+        # print(bound)
+        cv2.rectangle(image, (bound[0], bound[1]),
+                      (bound[0] + bound[2], bound[1] + bound[3]), (0, 255, 0), 2)
+        # cv2.rectangle(image, (int(bound[0] + bound[2]*crop1), int(bound[1] + bound[3]*crop1)),
+        #               (int(bound[0] + bound[2]*(1-crop1)), int(bound[1] + bound[3]*(1-crop1))), (255, 0, 0), 2)
+        # cv2.rectangle(image, (int(bound[0] + bound[2]*crop2), int(bound[1] + bound[3]*crop2)),
+        #               (int(bound[0] + bound[2]*(1-crop2)), int(bound[1] + bound[3]*(1-crop2))), (255, 0, 0), 2)
+
+    return image, purged_cnts
 
 
-def filter_channels(image):
-    b, g, r = cv2.split(image)
+def text_from_lines(imgs, c):
+    full_text = ""
 
-    b = thresh_apply(clahe_contrast_gray(b))
-    g = thresh_apply(clahe_contrast_gray(g))
-    r = thresh_apply(clahe_contrast_gray(r))
+    for i, img in enumerate(imgs):
+        data = pytesseract.image_to_data(
+            img, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5", output_type=pytesseract.Output.DICT)
 
-    return b, g, r
+        text = filter_data(data)
+
+        if len(text) == 0:
+            continue
+
+        full_text += text + "\n"
+        cv2.imwrite("tmp/{}-{}.png".format(c, i), img)
+
+    return full_text.strip()
 
 
 def filter_text(text):
     text = text.replace('\n', '')
     text = text.replace(' ', '')
+    text = text.replace('|', 'ー')
     text = text.strip()
     return text
 
 
-def text_from_channels(image):
-    b, g, r = filter_channels(image)
+def filter_data(data):
+    text = ""
+    conf = data["conf"][::-1]
+    start = len(data["conf"]) - (conf.index('-1')
+                                 if '-1' in conf else conf.index(-1))
+    for i in range(start, len(data["conf"])):
+        # to remove duplicate kana
+        if data["conf"][i] < np.mean(data["conf"][start:]) * 0.5:
+            if len(data["text"][i]) > 1:
+                text += data["text"][i][0]
+            continue
 
-    try:
-        if np.shape(image)[0] <= np.shape(image)[1]:
-            text_b = pytesseract.image_to_string(
-                b, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
-            text_g = pytesseract.image_to_string(
-                g, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
-            text_r = pytesseract.image_to_string(
-                r, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 8")
-        else:
-            text_b = pytesseract.image_to_string(
-                b, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
-            text_g = pytesseract.image_to_string(
-                g, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
-            text_r = pytesseract.image_to_string(
-                r, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5")
+        text += data["text"][i]
 
-        return filter_text(text_b), filter_text(text_g), filter_text(text_r)
-    except RuntimeError as e:
-        print(e)
-        return b, g, r, '', '', ''
+    return filter_text(text)
 
 
 def text_from_image(image):
@@ -253,20 +424,9 @@ def text_from_image(image):
         data = pytesseract.image_to_data(
             img, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5", output_type=pytesseract.Output.DICT)
 
-    print(data)
+    # print(data)
 
-    text = ""
-    start = len(data["conf"]) - data["conf"][::-1].index('-1')
-    for i in range(start, len(data["conf"])):
-        # to remove duplicate kana
-        if data["conf"][i] < np.mean(data["conf"][start:]) * 0.8:
-            if len(data["text"][i]) > 1 and data["text"][i][0] == data["text"][i][0]:
-                text += data["text"][i][0]
-            continue
-
-        text += data["text"][i]
-
-    print(text)
+    text = filter_data(data)
 
     return filter_text(text)
 
@@ -338,44 +498,42 @@ class OCR:
     x_min = y_min = 0
     x_max = y_max = 1
 
-    key_down = False
-    mouse_down = False
-
-    select_window = None
-
-    select_label = None
-    tooltip_label = None
-
-    tooltip_text = "No text found"
+    # key_down = False
+    # mouse_down = False
 
     closed = False
 
-    hotkey = ""
+    # hotkey = ""
 
     def __init__(self, root):
-        self.root = root
+        self.root: TkinterDnD.Tk = root
+
+        self.root.title("Manga Translation")
+        self.root.wm_geometry("%dx%d+%d+%d" %
+                              (get_monitors()[0].width, get_monitors()[0].height, 0, 0))
+
+        self.root.drop_target_register(DND_FILES)
+        self.root.dnd_bind('<<Drop>>', self.on_drop)
+
+        print("Initializing defaults for image processing...")
+
+        self.bg = Label(self.root)
+        self.bg.pack(fill=BOTH, expand=1)
+
+        self.bg_pil = Image.new(
+            'RGB', (self.bg.winfo_width(), self.bg.winfo_height()))
+        self.images = [Image.new(
+            'RGB', (self.bg.winfo_width(), self.bg.winfo_height()))]
+
+        self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
+
+        self.bg.config(image=self.bg_tk)
+
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         print("Loading dictionary...")
         self.dictionary_map = load_dictionary(
             str(Path(SCRIPT_DIR, 'dictionaries', 'jmdict_english.zip')))
-
-        print("Initializing defaults for image processing...")
-        self.bg_pil = Image.new(
-            'RGB', (get_monitors()[0].width, get_monitors()[0].height))
-        self.bg_rect = Image.new(
-            'RGB', (get_monitors()[0].width, get_monitors()[0].height))
-        self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
-
-        self.button_font = font.Font(
-            self.root, family='Arial', size=12, weight='bold')
-        self.hotkey_button = Button(self.root, text="Set Activation Hotkey")
-        self.hotkey_button.config(font=self.button_font)
-        self.hotkey_button.pack(side=TOP, fill=BOTH, expand=True)
-
-        self.hotkey_button.bind("<Button-1>", self.set_hotkey)
-
-        self.root.bind('<Configure>', self.on_resize)
-        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def on_resize(self, event):
         button_width = self.hotkey_button.winfo_width()
@@ -386,9 +544,36 @@ class OCR:
     def on_close(self):
         self.closed = True
         self.root.destroy()
-        if self.select_window is not None:
-            self.select_window.destroy()
-            self.select_window = None
+
+    def convert_page(self, file, page):
+        # TODO cache for converted images
+        print("Starting converting page!")
+        self.images = convert_from_path(file, first_page=page, last_page=page)
+
+        self.bg_pil = Image.new(
+            'RGB', (self.bg.winfo_width(), self.bg.winfo_height()))
+
+        self.scale = self.bg.winfo_height() / self.images[0].height
+
+        # self.images[0] = self.images[0].resize(
+        #     (floor(self.images[0].width * self.scale), self.bg_pil.height))
+        # self.bg_pil.paste(self.images[0], (0, 0))
+
+        print("Done converting page!")
+
+    def on_drop(self, event: TkinterDnD.DnDEvent):
+        file = event.data.split(
+            "} {")[0].replace("{", "").replace("}", "")
+
+        self.convert_page(file, 12)
+
+        img, bubbles = get_text_bubbles(np.array(self.images[0]))
+        # img = self.get_text_boxes(img)
+        self.bg_pil = Image.fromarray(img).resize(
+            (floor(self.images[0].width * self.scale), self.bg.winfo_height()))
+
+        self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
+        self.bg.config(image=self.bg_tk)
 
     def set_hotkey(self, event):
         self.hotkey = keyboard.read_hotkey(suppress=False)
@@ -443,65 +628,9 @@ class OCR:
         while True:
             if self.closed:
                 return
-            if self.hotkey == "":
-                self.root.update()
-                continue
-            if keyboard.is_pressed(self.hotkey):
-                if not self.key_down:
-                    self.key_down = True
-
-                    self.bg_pil = grab_screen(
-                        0, 0, get_monitors()[0].width, get_monitors()[0].height)
-                    self.bg_rect = self.bg_pil.copy()
-
-                    self.select_window = Toplevel()
-                    self.select_window.wm_overrideredirect(True)
-                    self.select_window.wm_geometry("%dx%d+%d+%d" %
-                                                   (get_monitors()[0].width, get_monitors()[0].height, 0, 0))
-
-                    self.select_label = Label(self.select_window)
-                    self.select_label.config(image=self.bg_tk)
-                    self.select_label.place(
-                        x=0, y=0, width=get_monitors()[0].width, height=get_monitors()[0].height)
-                    self.select_label.bind("<Button-1>", self.mouse_button)
-                    self.select_label.bind(
-                        "<B1-Motion>", self.mouse_motion_button)
-                    self.select_label.bind(
-                        "<Motion>", self.mouse_motion)
-                    self.select_label.bind(
-                        "<ButtonRelease-1>", self.mouse_button_release)
-
-                    self.tooltip_label = Label(self.select_window, text=self.tooltip_text, justify='left',
-                                               background="#ffffff", relief='solid', borderwidth=1,
-                                               wraplength=180)
-                    self.tooltip_label.place(x=self.mx, y=self.my -
-                                             self.tooltip_label.winfo_height() - 10)
-
-                    self.select_window.wm_attributes('-topmost', True)
-                self.bg_tk = ImageTk.PhotoImage(image=self.bg_rect)
-                self.select_label.config(image=self.bg_tk)
-
-                self.tooltip_label.place(x=self.mx, y=self.my -
-                                         self.tooltip_label.winfo_height() - 10)
-                self.tooltip_label.config(text=self.tooltip_text)
-
-                self.select_window.update()
-            else:
-                self.key_down = False
-                if self.select_window is not None:
-                    self.select_window.destroy()
-                    self.select_window = None
 
             self.root.update()
 
-
-print("Starting...")
-win = Tk()
-win.title("Japanese -> English")
-win.geometry("%dx%d+%d+%d" %
-             (get_monitors()[0].width / 4, get_monitors()[0].width / 32, 0, 0))
-win.resizable(False, False)
-ocr = OCR(win)
 
 print("Loading jamdict...")
 jam = Jamdict()
@@ -510,5 +639,9 @@ dictionary_map = {}
 print("Loading sudachidict_full...")
 tokenizer_obj = dictionary.Dictionary(dict="full").create()
 mode = tokenizer.Tokenizer.SplitMode.B
+
+
+print("Starting...")
+ocr = OCR(TkinterDnD.Tk())
 
 ocr.main()
