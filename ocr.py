@@ -505,7 +505,13 @@ class OCR:
     bubbles = []
     scale = 1
 
+    show_bubbles = True
+
     def __init__(self, root):
+        print("Loading dictionary...")
+        self.dictionary_map = load_dictionary(
+            str(Path(SCRIPT_DIR, 'dictionaries', 'jmdict_english.zip')))
+
         self.root: TkinterDnD.Tk = root
 
         self.root.title("Manga Translation")
@@ -517,7 +523,7 @@ class OCR:
 
         print("Initializing defaults for image processing...")
 
-        self.bg = Label(self.root)
+        self.bg = Label(self.root, borderwidth=0)
         self.bg.place(x=0, y=0)
 
         self.bg_pil = Image.new(
@@ -529,13 +535,50 @@ class OCR:
 
         self.bg.config(image=self.bg_tk)
 
+        self.menu = tkinter.Menu(self.root)
+
+        self.file_menu = tkinter.Menu(self.menu, tearoff=0)
+        self.file_menu.add_command(label="Open", command=self.open_file)
+        self.file_menu.add_command(label="Save", command=self.save_file)
+        self.file_menu.add_command(label="Save as", command=self.save_file_as)
+        self.file_menu.add_command(label="Exit", command=self.on_close)
+        self.menu.add_cascade(label="File", menu=self.file_menu)
+
+        self.edit_menu = tkinter.Menu(self.menu, tearoff=0)
+        self.edit_menu.add_command(
+            label="Toggle bubbles", command=self.toggle_bubbles)
+        self.edit_menu.add_command(
+            label="Toggle JP/EN edit", command=self.toggle_lang)
+        self.menu.add_cascade(label="Edit", menu=self.edit_menu)
+
+        self.root.config(menu=self.menu)
+
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        print("Loading dictionary...")
-        self.dictionary_map = load_dictionary(
-            str(Path(SCRIPT_DIR, 'dictionaries', 'jmdict_english.zip')))
+    def open_file(self):
+        pass
 
-    def on_resize(self, event):
+    def save_file(self):
+        pass
+
+    def save_file_as(self):
+        pass
+
+    def toggle_bubbles(self):
+        if self.show_bubbles:
+            self.show_bubbles = False
+
+            self.bg.lift()
+        else:
+            self.show_bubbles = True
+
+            for bubble in self.bubbles:
+                bubble.lift()
+
+    def toggle_lang(self):
+        pass
+
+    def on_resize(self):
         button_width = self.hotkey_button.winfo_width()
         button_height = self.hotkey_button.winfo_height()
 
@@ -555,34 +598,33 @@ class OCR:
 
         self.scale = self.bg.winfo_height() / self.images[0].height
 
-        # self.images[0] = self.images[0].resize(
-        #     (floor(self.images[0].width * self.scale), self.bg_pil.height))
-        # self.bg_pil.paste(self.images[0], (0, 0))
-
         print("Done converting page!")
 
-    def create_bubbles(self, bubbles):
-        for bubble, text in bubbles:
+    def create_bubbles(self, bbls):
+        self.show_bubbles = True
+
+        bubbles = []
+        for bubble, text in bbls:
             print(bubble, text)
 
-            self.create_bubble(bubble, text)
+            bubbles.append(self.create_bubble(bubble, text))
+
+        return bubbles
 
     def create_bubble(self, bubble, text):
         text_frame = tkinter.Frame(self.root, width=int(
             bubble[2]*self.scale), height=int(bubble[3]*self.scale))
         text_frame.place(x=int(bubble[0]*self.scale),
                          y=int(bubble[1]*self.scale))
-        # text_frame.grid_propagate(False)
 
         text_box = tkinter.Text(text_frame, bg='white')
         text_box.insert(tkinter.END, text)
         text_box.place(x=0, y=0, width=int(
             bubble[2]*self.scale), height=int(bubble[3]*self.scale))
 
-        def on_click(event):
-            text_frame.lift()
+        text_box.bind("<Button-1>", lambda event: text_frame.lift())
 
-        text_box.bind("<Button-1>", on_click)
+        return text_frame
 
     def on_drop(self, event: TkinterDnD.DnDEvent):
         file = event.data.split(
@@ -590,9 +632,9 @@ class OCR:
 
         self.convert_page(file, 12)
 
-        self.bubbles = get_text_bubbles(np.array(self.images[0]))
+        bbls = get_text_bubbles(np.array(self.images[0]))
 
-        self.create_bubbles(self.bubbles)
+        self.bubbles = self.create_bubbles(bbls)
 
         self.bg_pil = self.images[0].resize(
             (floor(self.images[0].width * self.scale), self.bg.winfo_height()))
