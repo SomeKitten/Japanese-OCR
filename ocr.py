@@ -1,17 +1,13 @@
-import asyncio
-from curses.textpad import Textbox
-import enum
 import json
 from math import floor
 import os
 import platform
-from tkinter import BOTH, TOP, Button, Label, Tk, Toplevel, font
+from tkinter import Label
 import tkinter
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import zipfile
 from pathlib import Path
 from pdf2image import convert_from_path
-import tempfile
 
 import cv2
 from jamdict import Jamdict
@@ -23,9 +19,7 @@ from screeninfo import get_monitors
 from sudachipy import tokenizer
 from sudachipy import dictionary
 
-import keyboard
-
-from PIL import Image, ImageTk, ImageDraw, ImageGrab, ImageChops
+from PIL import Image, ImageTk, ImageGrab, ImageChops
 
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 
@@ -495,17 +489,16 @@ class OCR:
     x_min = y_min = 0
     x_max = y_max = 1
 
-    # key_down = False
-    # mouse_down = False
-
     closed = False
 
-    # hotkey = ""
-
     bubbles = []
-    scale = 1
+    jp_text = []
+    en_text = []
 
     show_bubbles = True
+    show_original = True
+
+    scale = 1
 
     def __init__(self, root):
         print("Loading dictionary...")
@@ -541,6 +534,7 @@ class OCR:
         self.file_menu.add_command(label="Open", command=self.open_file)
         self.file_menu.add_command(label="Save", command=self.save_file)
         self.file_menu.add_command(label="Save as", command=self.save_file_as)
+        self.file_menu.add_command(label="Export", command=self.export_pdf)
         self.file_menu.add_command(label="Exit", command=self.on_close)
         self.menu.add_cascade(label="File", menu=self.file_menu)
 
@@ -550,6 +544,13 @@ class OCR:
         self.edit_menu.add_command(
             label="Toggle JP/EN edit", command=self.toggle_lang)
         self.menu.add_cascade(label="Edit", menu=self.edit_menu)
+
+        self.root.bind("<Tab>", self.tab_key)
+
+        # Windows + OSX
+        self.root.bind("<Shift-Tab>", self.shift_tab_key)
+        # Linux
+        self.root.bind("<Shift-ISO_Left_Tab>", self.shift_tab_key)
 
         self.root.config(menu=self.menu)
 
@@ -564,19 +565,40 @@ class OCR:
     def save_file_as(self):
         pass
 
+    def export_pdf(self):
+        pass
+
+    def tab_key(self, event):
+        self.toggle_lang()
+        return 'break'
+
+    def shift_tab_key(self, event):
+        self.toggle_bubbles()
+        return 'break'
+
     def toggle_bubbles(self):
+        self.show_bubbles = not self.show_bubbles
         if self.show_bubbles:
-            self.show_bubbles = False
-
-            self.bg.lift()
-        else:
-            self.show_bubbles = True
-
             for bubble in self.bubbles:
                 bubble.lift()
+        else:
+            self.bg.lift()
 
     def toggle_lang(self):
-        pass
+        self.show_original = not self.show_original
+
+        if self.show_original:
+            for i, bubble in enumerate(self.bubbles):
+                text = bubble.winfo_children()[0]
+                self.en_text[i] = text.get('1.0', 'end-1c')
+                text.delete('1.0', 'end')
+                text.insert('end', self.jp_text[i])
+        else:
+            for i, bubble in enumerate(self.bubbles):
+                text = bubble.winfo_children()[0]
+                self.jp_text[i] = text.get('1.0', 'end-1c')
+                text.delete('1.0', 'end')
+                text.insert('end', self.en_text[i])
 
     def on_resize(self):
         button_width = self.hotkey_button.winfo_width()
@@ -604,12 +626,16 @@ class OCR:
         self.show_bubbles = True
 
         bubbles = []
+        jp = []
+        en = []
         for bubble, text in bbls:
             print(bubble, text)
 
             bubbles.append(self.create_bubble(bubble, text))
+            jp.append(text)
+            en.append("")
 
-        return bubbles
+        return bubbles, jp, en
 
     def create_bubble(self, bubble, text):
         text_frame = tkinter.Frame(self.root, width=int(
@@ -623,6 +649,12 @@ class OCR:
             bubble[2]*self.scale), height=int(bubble[3]*self.scale))
 
         text_box.bind("<Button-1>", lambda event: text_frame.lift())
+        text_box.bind("<Tab>", self.tab_key)
+
+        # Windows + OSX
+        text_box.bind("<Shift-Tab>", self.shift_tab_key)
+        # Linux
+        text_box.bind("<Shift-ISO_Left_Tab>", self.shift_tab_key)
 
         return text_frame
 
@@ -634,61 +666,13 @@ class OCR:
 
         bbls = get_text_bubbles(np.array(self.images[0]))
 
-        self.bubbles = self.create_bubbles(bbls)
+        self.bubbles, self.jp_text, self.en_text = self.create_bubbles(bbls)
 
         self.bg_pil = self.images[0].resize(
             (floor(self.images[0].width * self.scale), self.bg.winfo_height()))
 
         self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
         self.bg.config(image=self.bg_tk)
-
-    def set_hotkey(self, event):
-        self.hotkey = keyboard.read_hotkey(suppress=False)
-        self.hotkey_button.config(text=self.hotkey)
-
-    def order_mouse(self):
-        self.x_min = min(self.x, self.x1)
-        self.x_max = max(self.x, self.x1)
-        self.y_min = min(self.y, self.y1)
-        self.y_max = max(self.y, self.y1)
-
-        if self.x_min == self.x_max:
-            self.x_max += 1
-        if self.y_min == self.y_max:
-            self.y_max += 1
-
-    def mouse_button_release(self, event):
-        if self.key_down:
-            jp, en, pron = cursor_search(np.array(self.bg_pil.crop(
-                (self.x_min, self.y_min, self.x_max, self.y_max))))
-            if jp != "None":
-                self.tooltip_text = jp + "\n" + pron + "\n" + en
-            else:
-                self.tooltip_text = "No text found"
-
-    def mouse_motion(self, event):
-        self.mx, self.my = event.x, event.y
-
-    def mouse_motion_button(self, event):
-        if self.key_down:
-            self.x1, self.y1 = event.x, event.y
-            self.mx, self.my = event.x, event.y
-
-            self.order_mouse()
-
-            self.bg_rect = self.bg_pil.copy()
-            img_draw = ImageDraw.Draw(self.bg_rect)
-            img_draw.rectangle(
-                [self.x_min, self.y_min, self.x_max, self.y_max], outline='red')
-
-    def mouse_button(self, event):
-        if self.key_down:
-            self.mouse_down = True
-            self.x, self.y = event.x, event.y
-            self.x1 = self.x + 1
-            self.y1 = self.y + 1
-
-            self.order_mouse()
 
     def main(self):
         print("Initialization complete!")
