@@ -1,10 +1,12 @@
 import asyncio
+from curses.textpad import Textbox
 import enum
 import json
 from math import floor
 import os
 import platform
 from tkinter import BOTH, TOP, Button, Label, Tk, Toplevel, font
+import tkinter
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import zipfile
 from pathlib import Path
@@ -128,8 +130,9 @@ def houghLines(img):
 
 
 def scale(img):
-    if min(img.shape) < 100:
-        return cv2.resize(img, (int(img.shape[1] * 3), int(img.shape[0] * 3)), interpolation=cv2.INTER_CUBIC)
+    if min(img.shape) < 200:
+        scl = 200 / min(img.shape)
+        return cv2.resize(img, (int(img.shape[1] * scl), int(img.shape[0] * scl)), interpolation=cv2.INTER_CUBIC)
     else:
         return img
 
@@ -284,11 +287,15 @@ def furigana_removal(img):
         if len(i.T) > max_len * 0.8:
             purged_imgs.append(i)
 
+    purged_imgs = purged_imgs[::-1]
+
     return purged_imgs
 
 
 def filter_image(image):
-    cont = idk_contrast(image)
+    scl = scale(image)
+
+    cont = idk_contrast(scl)
 
     thresh = thresh_apply2(cont)
 
@@ -299,12 +306,18 @@ def filter_image(image):
     images = furigana_removal(trimmed)
 
     for i, img in enumerate(images):
-        images[i] = trim(img, 30)
+        inv = 255 - img
+        thin = cv2.ximgproc.thinning(inv)
+        dil = dilate(thin)
+        inv2 = 255 - dil
+        images[i] = trim(inv2, 30)
 
     return images
 
 
 def get_text_bubbles(image):
+    print("Getting text bubbles!")
+
     gray = get_grayscale(image)
 
     # preprocessing
@@ -319,7 +332,7 @@ def get_text_bubbles(image):
 
     # postprocessing(?)
 
-    purged_cnts = []
+    bubbles = []
 
     for c, cnt in enumerate(cnts):
         crop1 = 0.1
@@ -350,25 +363,27 @@ def get_text_bubbles(image):
         if not (avg > 128 and avg1 > avg2):
             continue
 
-        purged_cnts.append(cnt)
-
         filtered = filter_image(cropped_gray)
         text = text_from_lines(filtered, c)
 
         if text == "":
             continue
 
-        print(c, text)
+        bubbles.append((bound, text))
+
+        # print(c, text)
 
         # print(bound)
-        cv2.rectangle(image, (bound[0], bound[1]),
-                      (bound[0] + bound[2], bound[1] + bound[3]), (0, 255, 0), 2)
+        # cv2.rectangle(image, (bound[0], bound[1]),
+        #               (bound[0] + bound[2], bound[1] + bound[3]), (0, 255, 0), 2)
         # cv2.rectangle(image, (int(bound[0] + bound[2]*crop1), int(bound[1] + bound[3]*crop1)),
         #               (int(bound[0] + bound[2]*(1-crop1)), int(bound[1] + bound[3]*(1-crop1))), (255, 0, 0), 2)
         # cv2.rectangle(image, (int(bound[0] + bound[2]*crop2), int(bound[1] + bound[3]*crop2)),
         #               (int(bound[0] + bound[2]*(1-crop2)), int(bound[1] + bound[3]*(1-crop2))), (255, 0, 0), 2)
 
-    return image, purged_cnts
+    print("Found {} bubbles!".format(len(bubbles)))
+
+    return bubbles
 
 
 def text_from_lines(imgs, c):
@@ -393,6 +408,7 @@ def filter_text(text):
     text = text.replace('\n', '')
     text = text.replace(' ', '')
     text = text.replace('|', 'ー')
+    text = text.replace(')', 'ー')
     text = text.strip()
     return text
 
@@ -410,23 +426,6 @@ def filter_data(data):
             continue
 
         text += data["text"][i]
-
-    return filter_text(text)
-
-
-def text_from_image(image):
-    img = filter_image(image)
-
-    if np.shape(image)[0] <= np.shape(image)[1]:
-        data = pytesseract.image_to_data(
-            img, lang="jpn", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 6", output_type=pytesseract.Output.DICT)
-    else:
-        data = pytesseract.image_to_data(
-            img, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5", output_type=pytesseract.Output.DICT)
-
-    # print(data)
-
-    text = filter_data(data)
 
     return filter_text(text)
 
@@ -457,9 +456,7 @@ def lookup_text_sudachi(text):
     return (entry[0], "\n".join(entry[5]), entry[1])
 
 
-def cursor_search(img):
-    text = text_from_image(img)
-
+def definition(text):
     texts = [lookup_text_sudachi(text), lookup_text(text)]
 
     texts = [text for text in texts if text[0] != '']
@@ -505,6 +502,9 @@ class OCR:
 
     # hotkey = ""
 
+    bubbles = []
+    scale = 1
+
     def __init__(self, root):
         self.root: TkinterDnD.Tk = root
 
@@ -518,12 +518,12 @@ class OCR:
         print("Initializing defaults for image processing...")
 
         self.bg = Label(self.root)
-        self.bg.pack(fill=BOTH, expand=1)
+        self.bg.place(x=0, y=0)
 
         self.bg_pil = Image.new(
-            'RGB', (self.bg.winfo_width(), self.bg.winfo_height()))
+            'RGB', (self.root.winfo_width(), self.root.winfo_height()), (0, 0, 0))
         self.images = [Image.new(
-            'RGB', (self.bg.winfo_width(), self.bg.winfo_height()))]
+            'RGB', (self.root.winfo_width(), self.root.winfo_height())), (0, 0, 0)]
 
         self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
 
@@ -561,15 +561,40 @@ class OCR:
 
         print("Done converting page!")
 
+    def create_bubbles(self, bubbles):
+        for bubble, text in bubbles:
+            print(bubble, text)
+
+            self.create_bubble(bubble, text)
+
+    def create_bubble(self, bubble, text):
+        text_frame = tkinter.Frame(self.root, width=int(
+            bubble[2]*self.scale), height=int(bubble[3]*self.scale))
+        text_frame.place(x=int(bubble[0]*self.scale),
+                         y=int(bubble[1]*self.scale))
+        # text_frame.grid_propagate(False)
+
+        text_box = tkinter.Text(text_frame, bg='white')
+        text_box.insert(tkinter.END, text)
+        text_box.place(x=0, y=0, width=int(
+            bubble[2]*self.scale), height=int(bubble[3]*self.scale))
+
+        def on_click(event):
+            text_frame.lift()
+
+        text_box.bind("<Button-1>", on_click)
+
     def on_drop(self, event: TkinterDnD.DnDEvent):
         file = event.data.split(
             "} {")[0].replace("{", "").replace("}", "")
 
         self.convert_page(file, 12)
 
-        img, bubbles = get_text_bubbles(np.array(self.images[0]))
-        # img = self.get_text_boxes(img)
-        self.bg_pil = Image.fromarray(img).resize(
+        self.bubbles = get_text_bubbles(np.array(self.images[0]))
+
+        self.create_bubbles(self.bubbles)
+
+        self.bg_pil = self.images[0].resize(
             (floor(self.images[0].width * self.scale), self.bg.winfo_height()))
 
         self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
