@@ -21,6 +21,8 @@ from sudachipy import dictionary
 
 from PIL import Image, ImageTk, ImageGrab, ImageChops
 
+from img_utils import ImageText
+
 SCRIPT_DIR = os.path.abspath(os.path.dirname(__file__))
 
 if platform.system() == 'Windows':
@@ -222,9 +224,6 @@ def line_contour_ext(img):
         if area > (img.shape[0] / 20 * img.shape[1] / 20) and area < (img.shape[0] / 3 * img.shape[1] / 3):
             purged_cnts.append(cnt)
 
-    print(cnts)
-    print(purged_cnts)
-
     cv2.drawContours(bg, cnts, -1, 255, 3)
 
     return bg
@@ -318,23 +317,11 @@ def filter_image(image):
     images, bounds = furigana_removal(trimmed)
 
     for i, img in enumerate(images):
-        # inv = 255 - img
-        # thin = cv2.ximgproc.thinning(inv)
-        # dil = dilate(thin)
-        # inv2 = 255 - dil
-
         bound = bounds[i]
         origt = origcropped[:, bound[0]:bound[1]]
 
-        # print(img.shape)
-        # print(origt.shape)
-
         t, s, b = trim(img, 10)
         origc = crop(origt, b, 10) if s else origt.copy()
-
-        print(t.shape)
-        print(origc.shape)
-        print(b)
 
         and_result = cv2.bitwise_not(cv2.bitwise_and(
             cv2.bitwise_not(t), cv2.bitwise_not(origc)))
@@ -396,16 +383,12 @@ def get_text_bubbles(image):
         avg1 = np.average(cropped1)
         avg2 = np.average(cropped2)
 
-        print(avg, avg1, avg2)
-
         filtered = filter_image(cropped_gray)
 
         for f, filt in enumerate(filtered):
             cv2.imwrite("tmp/bubble_{}_{}.png".format(c, f), filt)
 
         text = text_from_lines(filtered, c)
-
-        print(text)
 
         # if not (avg > 128 and avg1 > avg2):
         #     continue
@@ -463,7 +446,7 @@ def filter_data(data):
                                  if '-1' in conf else conf.index(-1))
     for i in range(start, len(data["conf"])):
         # to remove duplicate kana
-        if data["conf"][i] < 50:
+        if data["conf"][i] < 30:
             continue
 
         text += data["text"][i]
@@ -533,7 +516,10 @@ def load_dictionary(dictionary):
 class OCR:
     closed = False
 
+    images = []
+
     bubbles = []
+    boxes = []
     jp_text = []
     en_text = []
 
@@ -608,7 +594,20 @@ class OCR:
         pass
 
     def export_pdf(self):
-        pass
+        img = self.images[0]
+        img_txt = ImageText(img)
+
+        for b, box in enumerate(self.boxes):
+            if self.en_text[b] == "":
+                continue
+            fontsize = img_txt.get_font_size(
+                self.en_text[b], 'Roboto-Bold.ttf', box[2], box[3])
+            img_txt.write_text_box(
+                (box[0], box[1]), self.en_text[b], box[2], 'Roboto-Bold.ttf', fontsize)
+
+            print(self.en_text[b])
+
+        img_txt.save("output.png")
 
     def tab_key(self, event):
         self.toggle_lang()
@@ -668,14 +667,16 @@ class OCR:
         self.show_bubbles = True
 
         bubbles = []
+        boxes = []
         jp = []
         en = []
-        for bubble, text in bbls:
-            bubbles.append(self.create_bubble(bubble, text))
+        for box, text in bbls:
+            bubbles.append(self.create_bubble(box, text))
+            boxes.append(box)
             jp.append(text)
             en.append("")
 
-        return bubbles, jp, en
+        return bubbles, boxes, jp, en
 
     def create_bubble(self, bubble, text):
         text_frame = tkinter.Frame(self.root, width=int(
@@ -706,7 +707,8 @@ class OCR:
 
         bbls = get_text_bubbles(np.array(self.images[0]))
 
-        self.bubbles, self.jp_text, self.en_text = self.create_bubbles(bbls)
+        self.bubbles, self.boxes, self.jp_text, self.en_text = self.create_bubbles(
+            bbls)
 
         self.bg_pil = self.images[0].resize(
             (floor(self.images[0].width * self.scale), self.bg.winfo_height()))
