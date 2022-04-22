@@ -52,7 +52,7 @@ def dilate(image):
 
 def dilate2(image):
     kernel = np.ones((3, 3), np.uint8)
-    return cv2.dilate(image, kernel, iterations=3)
+    return cv2.dilate(image, kernel, iterations=1)
 
 
 def erode(image):
@@ -83,7 +83,7 @@ def thresh_apply(image):
 
 def thresh_apply2(image):
     thresh = np.zeros((image.shape[0], image.shape[1]), np.uint8)
-    mask = image[:, :] > 100
+    mask = image[:, :] > 128
 
     thresh[mask] = 255
     return thresh
@@ -149,9 +149,18 @@ def trim(im, border):
         bg = Image.new(
             im.mode, (bbox[2] - bbox[0] + border*2, bbox[3] - bbox[1] + border*2), im.getpixel((0, 0)))
         bg.paste(cropped, (border, border))
-        return np.array(bg)
+        return np.array(bg), True, bbox
     else:
-        return np.array(im)
+        return np.array(im), False, [0, 0, im.size[0], im.size[1]]
+
+
+def crop(img, bbox, border):
+    im = np.full((bbox[3] - bbox[1] + border*2, bbox[2] -
+                 bbox[0] + border*2), 255, np.uint8)
+    im[border:border+bbox[3]-bbox[1], border:border+bbox[2] -
+        bbox[0]] = img[bbox[1]:bbox[3], bbox[0]:bbox[2]]
+
+    return im
 
 
 def fill_contour(img):
@@ -197,7 +206,7 @@ def line_contour_tree2(img):
 
     cv2.drawContours(bg, purged_cnts, -1, 255, 3)
 
-    return purged_cnts
+    return purged_cnts, bg
 
 
 def line_contour_ext(img):
@@ -250,6 +259,7 @@ def remove_edge_lines(img):
 
 def furigana_removal(img):
     imgs = []
+    bounds = []
 
     start = -1
     last = 0
@@ -259,31 +269,37 @@ def furigana_removal(img):
 
         start = start + 1
         if c - start > len(img.T) / 10:
-            imgs.append(img.T[start:c].T)
+            imgs.append(img[:, start:c])
+            bounds.append((start, c))
             last = c
         start = c
 
     if np.average(img.T[-1]) != 255 and len(img.T) - last > len(img.T) / 10:
         if last == 0:
             imgs.append(img)
+            bounds.append((0, len(img.T)))
         else:
-            imgs.append(img.T[start:].T)
+            imgs.append(img[:, start:])
+            bounds.append((start, len(img.T)))
 
     if len(imgs) == 0:
-        return imgs
+        return [], []
 
     max_len = [len(i.T) for i in imgs]
     max_len = np.max(max_len)
 
     purged_imgs = []
+    purged_bounds = []
 
-    for i in imgs:
-        if len(i.T) > max_len * 0.8:
-            purged_imgs.append(i)
+    for i, im in enumerate(imgs):
+        if len(im.T) > max_len * 0.8:
+            purged_imgs.append(im)
+            purged_bounds.append(bounds[i])
 
     purged_imgs = purged_imgs[::-1]
+    purged_bounds = purged_bounds[::-1]
 
-    return purged_imgs
+    return purged_imgs, purged_bounds
 
 
 def filter_image(image):
@@ -295,16 +311,35 @@ def filter_image(image):
 
     removed = remove_edge_lines(thresh)
 
-    trimmed = trim(removed, 0)
+    trimmed, success, bbox = trim(removed, 0)
 
-    images = furigana_removal(trimmed)
+    origcropped = crop(scl, bbox, 0) if success else scl.copy()
+
+    images, bounds = furigana_removal(trimmed)
 
     for i, img in enumerate(images):
-        inv = 255 - img
-        thin = cv2.ximgproc.thinning(inv)
-        dil = dilate(thin)
-        inv2 = 255 - dil
-        images[i] = trim(inv2, 30)
+        # inv = 255 - img
+        # thin = cv2.ximgproc.thinning(inv)
+        # dil = dilate(thin)
+        # inv2 = 255 - dil
+
+        bound = bounds[i]
+        origt = origcropped[:, bound[0]:bound[1]]
+
+        # print(img.shape)
+        # print(origt.shape)
+
+        t, s, b = trim(img, 10)
+        origc = crop(origt, b, 10) if s else origt.copy()
+
+        print(t.shape)
+        print(origc.shape)
+        print(b)
+
+        and_result = cv2.bitwise_not(cv2.bitwise_and(
+            cv2.bitwise_not(t), cv2.bitwise_not(origc)))
+
+        images[i] = and_result
 
     return images
 
@@ -320,9 +355,16 @@ def get_text_bubbles(image):
     dil = dilate(inv)
     inv2 = cv2.bitwise_not(dil)
 
+    cv2.imwrite("tmp/bubbles.png", inv2)
+
     # bubble detection
     cont = line_contour_tree(inv2)
-    cnts = line_contour_tree2(cont)
+
+    cv2.imwrite("tmp/bubbles_cont.png", cont)
+
+    cnts, cont2 = line_contour_tree2(cont)
+
+    cv2.imwrite("tmp/bubbles_cont2.png", cont2)
 
     # postprocessing(?)
 
@@ -354,26 +396,23 @@ def get_text_bubbles(image):
         avg1 = np.average(cropped1)
         avg2 = np.average(cropped2)
 
-        if not (avg > 128 and avg1 > avg2):
-            continue
+        print(avg, avg1, avg2)
 
         filtered = filter_image(cropped_gray)
+
+        for f, filt in enumerate(filtered):
+            cv2.imwrite("tmp/bubble_{}_{}.png".format(c, f), filt)
+
         text = text_from_lines(filtered, c)
 
-        if text == "":
+        print(text)
+
+        # if not (avg > 128 and avg1 > avg2):
+        #     continue
+        if text == "" or len(text) < 2:
             continue
 
         bubbles.append((bound, text))
-
-        # print(c, text)
-
-        # print(bound)
-        # cv2.rectangle(image, (bound[0], bound[1]),
-        #               (bound[0] + bound[2], bound[1] + bound[3]), (0, 255, 0), 2)
-        # cv2.rectangle(image, (int(bound[0] + bound[2]*crop1), int(bound[1] + bound[3]*crop1)),
-        #               (int(bound[0] + bound[2]*(1-crop1)), int(bound[1] + bound[3]*(1-crop1))), (255, 0, 0), 2)
-        # cv2.rectangle(image, (int(bound[0] + bound[2]*crop2), int(bound[1] + bound[3]*crop2)),
-        #               (int(bound[0] + bound[2]*(1-crop2)), int(bound[1] + bound[3]*(1-crop2))), (255, 0, 0), 2)
 
     print("Found {} bubbles!".format(len(bubbles)))
 
@@ -385,7 +424,7 @@ def text_from_lines(imgs, c):
 
     for i, img in enumerate(imgs):
         data = pytesseract.image_to_data(
-            img, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_ --oem 1 --psm 5", output_type=pytesseract.Output.DICT)
+            img, lang="jpn_vert", timeout=2, config="-c tessedit_char_blacklist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_()0123456789 --oem 1 --psm 5", output_type=pytesseract.Output.DICT)
 
         text = filter_data(data)
 
@@ -393,30 +432,38 @@ def text_from_lines(imgs, c):
             continue
 
         full_text += text + "\n"
-        cv2.imwrite("tmp/{}-{}.png".format(c, i), img)
+        # cv2.imwrite("tmp/{}-{}.png".format(c, i), img)
 
     return full_text.strip()
 
 
 def filter_text(text):
+    # TODO replace with blacklist of characters
     text = text.replace('\n', '')
     text = text.replace(' ', '')
+    text = text.replace('\\', '')
+    text = text.replace('/', '')
+    text = text.replace('+', '')
+    text = text.replace('-', '')
+    text = text.replace('=', '')
+    text = text.replace('<', '')
+    text = text.replace('>', '')
+
     text = text.replace('|', 'ー')
-    text = text.replace(')', 'ー')
+
     text = text.strip()
     return text
 
 
 def filter_data(data):
     text = ""
+
     conf = data["conf"][::-1]
     start = len(data["conf"]) - (conf.index('-1')
                                  if '-1' in conf else conf.index(-1))
     for i in range(start, len(data["conf"])):
         # to remove duplicate kana
-        if data["conf"][i] < np.mean(data["conf"][start:]) * 0.5:
-            if len(data["text"][i]) > 1:
-                text += data["text"][i][0]
+        if data["conf"][i] < 50:
             continue
 
         text += data["text"][i]
@@ -484,11 +531,6 @@ def load_dictionary(dictionary):
 
 
 class OCR:
-    x = y = mx = my = 0
-    x1 = y1 = 1
-    x_min = y_min = 0
-    x_max = y_max = 1
-
     closed = False
 
     bubbles = []
@@ -629,8 +671,6 @@ class OCR:
         jp = []
         en = []
         for bubble, text in bbls:
-            print(bubble, text)
-
             bubbles.append(self.create_bubble(bubble, text))
             jp.append(text)
             en.append("")
@@ -681,6 +721,11 @@ class OCR:
                 return
 
             self.root.update()
+
+
+tmpdir = 'tmp'
+for f in os.listdir(tmpdir):
+    os.remove(os.path.join(tmpdir, f))
 
 
 print("Loading jamdict...")
