@@ -600,14 +600,15 @@ class OCR:
         for b, box in enumerate(self.boxes):
             if self.en_text[b] == "":
                 continue
-            fontsize = img_txt.get_font_size(
-                self.en_text[b], 'Roboto-Bold.ttf', box[2], box[3])
+
+            img_txt.draw.rectangle(
+                (box[0], box[1], box[0]+box[2], box[1]+box[3]), fill=(255, 255, 255))
             img_txt.write_text_box(
-                (box[0], box[1]), self.en_text[b], box[2], 'Roboto-Bold.ttf', fontsize)
+                (box[0], box[1]), self.en_text[b], box[2] * 0.9, 'Roboto-Bold.ttf', font_size=int(box[2] * 0.2), color=(0, 0, 0), place='center')
 
             print(self.en_text[b])
 
-        img_txt.save("output.png")
+        img_txt.save("tmp/output.png")
 
     def tab_key(self, event):
         self.toggle_lang()
@@ -640,6 +641,16 @@ class OCR:
                 self.jp_text[i] = text.get('1.0', 'end-1c')
                 text.delete('1.0', 'end')
                 text.insert('end', self.en_text[i])
+
+    def update_text(self, event):
+        if self.show_original:
+            for i, bubble in enumerate(self.bubbles):
+                text = bubble.winfo_children()[0]
+                self.jp_text[i] = text.get('1.0', 'end-1c')
+        else:
+            for i, bubble in enumerate(self.bubbles):
+                text = bubble.winfo_children()[0]
+                self.en_text[i] = text.get('1.0', 'end-1c')
 
     def on_resize(self):
         button_width = self.hotkey_button.winfo_width()
@@ -691,6 +702,7 @@ class OCR:
 
         text_box.bind("<Button-1>", lambda event: text_frame.lift())
         text_box.bind("<Tab>", self.tab_key)
+        text_box.bind("<Key>", self.update_text)
 
         # Windows + OSX
         text_box.bind("<Shift-Tab>", self.shift_tab_key)
