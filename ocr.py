@@ -569,11 +569,11 @@ class OCR:
         self.edit_menu = Menu(self.menu, tearoff=0)
         self.edit_menu.add_command(
             label="Toggle bubbles", command=self.toggle_bubbles)
-        self.edit_menu.add_command(
-            label="Toggle JP/EN edit", command=self.toggle_lang)
+        # self.edit_menu.add_command(
+        #     label="Toggle JP/EN edit", command=self.toggle_lang)
         self.menu.add_cascade(label="Edit", menu=self.edit_menu)
 
-        self.root.bind("<Tab>", self.tab_key)
+        # self.root.bind("<Tab>", self.tab_key)
 
         # Windows + OSX
         self.root.bind("<Shift-Tab>", self.shift_tab_key)
@@ -779,7 +779,7 @@ class OCR:
         self.load_pdf(file)
 
     def load_pdf(self, file):
-        self.page = 11
+        self.page = 0
         self.file = file
 
         self.show_original = self.auto_ocr
