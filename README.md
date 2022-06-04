@@ -14,7 +14,7 @@ Then, run this command in the same folder as ocr.py:
 
 ## Usage
 ### Importing
-To import a PDF, you can drag the file onto the window or use the menu.
+To import a PDF (one page at a time), you can drag the file onto the window or use the menu.
 
 ![import_drag](https://user-images.githubusercontent.com/30757547/171970041-33e6ff76-a430-48a5-9b19-ee45434b7b14.gif)
 
