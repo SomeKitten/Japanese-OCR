@@ -1,13 +1,13 @@
+import io
 import json
 from math import floor
 import os
 import platform
-from tkinter import Label
-import tkinter
+from tkinter import END, Frame, Label, Menu, Text, filedialog
 from tkinterdnd2 import DND_FILES, TkinterDnD
 import zipfile
 from pathlib import Path
-from pdf2image import convert_from_path
+from PyPDF2 import PdfFileReader
 
 import cv2
 from jamdict import Jamdict
@@ -378,11 +378,6 @@ def get_text_bubbles(image):
         cropped1[cropped1 < 250] = 0
         cropped2[cropped2 < 250] = 0
 
-        avg = np.average(cropped)
-
-        avg1 = np.average(cropped1)
-        avg2 = np.average(cropped2)
-
         filtered = filter_image(cropped_gray)
 
         for f, filt in enumerate(filtered):
@@ -390,12 +385,11 @@ def get_text_bubbles(image):
 
         text = text_from_lines(filtered, c)
 
-        # if not (avg > 128 and avg1 > avg2):
-        #     continue
-        if text == "" or len(text) < 2:
+        if len(text) < 2:
             continue
 
-        bubbles.append((bound, text))
+        # bubbles.append((bound, text))
+        bubbles.append((bound, ''))
 
     print("Found {} bubbles!".format(len(bubbles)))
 
@@ -525,8 +519,13 @@ class OCR:
 
     show_bubbles = True
     show_original = True
+    auto_ocr = False
+    been_ocr_pages = []
 
     scale = 1
+
+    page = 0
+    file = False
 
     def __init__(self, root):
         print("Loading dictionary...")
@@ -556,17 +555,18 @@ class OCR:
 
         self.bg.config(image=self.bg_tk)
 
-        self.menu = tkinter.Menu(self.root)
+        self.menu = Menu(self.root)
 
-        self.file_menu = tkinter.Menu(self.menu, tearoff=0)
-        self.file_menu.add_command(label="Open", command=self.open_file)
-        self.file_menu.add_command(label="Save", command=self.save_file)
-        self.file_menu.add_command(label="Save as", command=self.save_file_as)
+        self.file_menu = Menu(self.menu, tearoff=0)
+        # self.file_menu.add_command(label="Open", command=self.open_file)
+        # self.file_menu.add_command(label="Save", command=self.save_file)
+        # self.file_menu.add_command(label="Save as", command=self.save_file_as)
+        self.file_menu.add_command(label="Import", command=self.import_pdf)
         self.file_menu.add_command(label="Export", command=self.export_pdf)
         self.file_menu.add_command(label="Exit", command=self.on_close)
         self.menu.add_cascade(label="File", menu=self.file_menu)
 
-        self.edit_menu = tkinter.Menu(self.menu, tearoff=0)
+        self.edit_menu = Menu(self.menu, tearoff=0)
         self.edit_menu.add_command(
             label="Toggle bubbles", command=self.toggle_bubbles)
         self.edit_menu.add_command(
@@ -584,15 +584,16 @@ class OCR:
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
-    def open_file(self):
-        pass
+    # def open_file(self):
+    #     pass
 
-    def save_file(self):
-        pass
+    # def save_file(self):
+    #     pass
 
-    def save_file_as(self):
-        pass
+    # def save_file_as(self):
+    #     pass
 
+    # TODO export PDF instead of (temporary) PNG
     def export_pdf(self):
         img = self.images[0]
         img_txt = ImageText(img)
@@ -609,6 +610,13 @@ class OCR:
             print(self.en_text[b])
 
         img_txt.save("tmp/output.png")
+
+    def import_pdf(self):
+        path = filedialog.askopenfilename(
+            title="Select PDF file", filetypes=[("PDF", "*.pdf")])
+        if path == '':
+            return
+        self.load_pdf(path)
 
     def tab_key(self, event):
         self.toggle_lang()
@@ -627,20 +635,21 @@ class OCR:
             self.bg.lift()
 
     def toggle_lang(self):
-        self.show_original = not self.show_original
+        if self.been_ocr_pages[self.page]:
+            self.show_original = not self.show_original
 
-        if self.show_original:
-            for i, bubble in enumerate(self.bubbles):
-                text = bubble.winfo_children()[0]
-                self.en_text[i] = text.get('1.0', 'end-1c')
-                text.delete('1.0', 'end')
-                text.insert('end', self.jp_text[i])
-        else:
-            for i, bubble in enumerate(self.bubbles):
-                text = bubble.winfo_children()[0]
-                self.jp_text[i] = text.get('1.0', 'end-1c')
-                text.delete('1.0', 'end')
-                text.insert('end', self.en_text[i])
+            if self.show_original:
+                for i, bubble in enumerate(self.bubbles):
+                    text = bubble.winfo_children()[0]
+                    self.en_text[i] = text.get('1.0', 'end-1c')
+                    text.delete('1.0', 'end')
+                    text.insert('end', self.jp_text[i])
+            else:
+                for i, bubble in enumerate(self.bubbles):
+                    text = bubble.winfo_children()[0]
+                    self.jp_text[i] = text.get('1.0', 'end-1c')
+                    text.delete('1.0', 'end')
+                    text.insert('end', self.en_text[i])
 
     def update_text(self, event):
         if self.show_original:
@@ -662,17 +671,67 @@ class OCR:
         self.closed = True
         self.root.destroy()
 
-    def convert_page(self, file, page):
+    def convert_page(self, file, p):
         # TODO cache for converted images
         print("Starting converting page!")
-        self.images = convert_from_path(file, first_page=page, last_page=page)
+        self.reader = PdfFileReader(file)
+        page = self.reader.pages[p]
+        xObject = page['/Resources']['/XObject'].getObject()
 
-        self.bg_pil = Image.new(
-            'RGB', (self.bg.winfo_width(), self.bg.winfo_height()))
+        print("A")
 
-        self.scale = self.bg.winfo_height() / self.images[0].height
+        for obj in xObject:
+            print(obj)
+            if xObject[obj]['/Subtype'] == '/Image':
+                print("B")
+                size = (xObject[obj]['/Width'], xObject[obj]['/Height'])
+                data = xObject[obj].getData()
+                if xObject[obj]['/ColorSpace'] == '/DeviceRGB':
+                    print("C")
+                    mode = "RGB"
+                else:
+                    print("D")
+                    mode = "P"
 
-        print("Done converting page!")
+                print(xObject[obj]['/Filter'])
+
+                print("E")
+
+                print(data)
+
+                image = Image.open(io.BytesIO(data))
+
+                print(image)
+
+                while len(self.images) < p + 1:
+                    self.images.append(False)
+                self.images[p] = image
+
+                self.bg_pil = Image.new(
+                    'RGB', (self.bg.winfo_width(), self.bg.winfo_height()))
+
+                self.scale = self.bg.winfo_height() / size[1]
+
+                print("Done converting page!")
+
+                for bubble in self.bubbles:
+                    bubble.destroy()
+
+                bbls = get_text_bubbles(np.array(self.images[p]))
+
+                self.bubbles, self.boxes, self.jp_text, self.en_text = self.create_bubbles(
+                    bbls)
+
+                self.toggle_lang()
+
+                self.bg_pil = self.images[p].resize(
+                    (floor(self.images[p].width * self.scale), self.bg.winfo_height()))
+
+                self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
+                self.bg.config(image=self.bg_tk)
+
+                return
+        raise Exception("No image found!")
 
     def create_bubbles(self, bbls):
         self.show_bubbles = True
@@ -682,7 +741,7 @@ class OCR:
         jp = []
         en = []
         for box, text in bbls:
-            bubbles.append(self.create_bubble(box, text))
+            bubbles.append(self.create_bubble(box, ''))
             boxes.append(box)
             jp.append(text)
             en.append("")
@@ -690,17 +749,17 @@ class OCR:
         return bubbles, boxes, jp, en
 
     def create_bubble(self, bubble, text):
-        text_frame = tkinter.Frame(self.root, width=int(
+        text_frame = Frame(self.root, width=int(
             bubble[2]*self.scale), height=int(bubble[3]*self.scale))
         text_frame.place(x=int(bubble[0]*self.scale),
                          y=int(bubble[1]*self.scale))
 
-        text_box = tkinter.Text(text_frame, bg='white')
-        text_box.insert(tkinter.END, text)
+        text_box = Text(text_frame, bg='white')
+        text_box.insert(END, text)
         text_box.place(x=0, y=0, width=int(
             bubble[2]*self.scale), height=int(bubble[3]*self.scale))
 
-        text_box.bind("<Button-1>", lambda event: text_frame.lift())
+        text_box.bind("<Button-1>", lambda _: text_frame.lift())
         text_box.bind("<Tab>", self.tab_key)
         text_box.bind("<Key>", self.update_text)
 
@@ -709,24 +768,34 @@ class OCR:
         # Linux
         text_box.bind("<Shift-ISO_Left_Tab>", self.shift_tab_key)
 
+        text_box.bind("<Control-Right>",
+                      lambda _: self.switch_page(self.page + 1))
+
         return text_frame
 
     def on_drop(self, event: TkinterDnD.DnDEvent):
         file = event.data.split(
             "} {")[0].replace("{", "").replace("}", "")
+        self.load_pdf(file)
 
-        self.convert_page(file, 12)
+    def load_pdf(self, file):
+        self.page = 11
+        self.file = file
 
-        bbls = get_text_bubbles(np.array(self.images[0]))
+        self.show_original = self.auto_ocr
+        self.been_ocr_pages = [False for _ in range(self.page + 1)]
+        self.convert_page(file, self.page)
+        self.been_ocr_pages[self.page] = self.auto_ocr
 
-        self.bubbles, self.boxes, self.jp_text, self.en_text = self.create_bubbles(
-            bbls)
+    def switch_page(self, page):
+        self.show_original = self.auto_ocr
+        self.page = page
 
-        self.bg_pil = self.images[0].resize(
-            (floor(self.images[0].width * self.scale), self.bg.winfo_height()))
+        while len(self.been_ocr_pages) < page + 1:
+            self.been_ocr_pages.append(False)
 
-        self.bg_tk = ImageTk.PhotoImage(image=self.bg_pil)
-        self.bg.config(image=self.bg_tk)
+        self.convert_page(self.file, page)
+        self.been_ocr_pages[page] = self.auto_ocr
 
     def main(self):
         print("Initialization complete!")
